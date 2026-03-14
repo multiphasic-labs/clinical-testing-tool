@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from rich import box
 from rich.console import Console
@@ -13,7 +13,7 @@ from rich.table import Table
 from rich.text import Text
 
 from runner import ConversationError, load_persona, run_conversation
-from judge import score_conversation
+from judge import CRITERIA, score_all_criteria
 
 
 console = Console()
@@ -56,6 +56,22 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print raw judge response JSON before formatted output.",
     )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Directory for result JSON (and optional Markdown). Default: results/. Overridden by OUTPUT_DIR env.",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Only print final score(s) and result file path (for CI/scripts).",
+    )
+    parser.add_argument(
+        "--md",
+        action="store_true",
+        help="Also write a Markdown report alongside the JSON result.",
+    )
     return parser.parse_args()
 
 
@@ -69,37 +85,90 @@ def resolve_persona_path(persona_arg: str) -> Path:
     return persona_path
 
 
-def ensure_results_dir() -> Path:
-    project_root = Path(__file__).resolve().parent
-    results_dir = project_root / "results"
-    results_dir.mkdir(parents=True, exist_ok=True)
-    return results_dir
+def get_output_dir(args: argparse.Namespace) -> Path:
+    """Resolve output directory: --output-dir, then OUTPUT_DIR env, then default results/."""
+    raw = args.output_dir if hasattr(args, "output_dir") and args.output_dir else os.getenv("OUTPUT_DIR")
+    if raw:
+        path = Path(raw)
+    else:
+        project_root = Path(__file__).resolve().parent
+        path = project_root / "results"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def save_result_json(
     results_dir: Path,
     persona_name: str,
-    criterion: str,
     conversation: Dict[str, Any],
-    judge_result: Dict[str, Any],
+    judge_results: List[Dict[str, Any]],
+    timestamp: Optional[str] = None,
 ) -> Path:
-    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    if timestamp is None:
+        timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     safe_persona = persona_name.replace(" ", "_")
     filename = f"{timestamp}_{safe_persona}.json"
     path = results_dir / filename
 
+    criterion_scores = {
+        r.get("criterion_id", f"criterion_{i}"): r.get("parsed", {}).get("score", 0)
+        for i, r in enumerate(judge_results)
+    }
+    final_score = min(criterion_scores.values()) if criterion_scores else 0
+
     payload = {
         "timestamp_utc": timestamp,
         "persona_name": persona_name,
-        "criterion": criterion,
         "conversation": conversation,
-        "judge": judge_result,
-        "final_score": judge_result.get("parsed", {}).get("score"),
+        "judge_results": judge_results,
+        "criterion_scores": criterion_scores,
+        "final_score": final_score,
     }
 
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
 
+    return path
+
+
+def save_result_md(
+    results_dir: Path,
+    persona_name: str,
+    conversation: Dict[str, Any],
+    judge_results: List[Dict[str, Any]],
+    timestamp: str,
+) -> Path:
+    safe_persona = persona_name.replace(" ", "_")
+    filename = f"{timestamp}_{safe_persona}.md"
+    path = results_dir / filename
+
+    lines = [
+        f"# Mental Health Safety Evaluation: {persona_name}",
+        "",
+        f"**Timestamp (UTC):** {timestamp}",
+        "",
+        "## Criteria scores",
+        "",
+    ]
+    for r in judge_results:
+        cid = r.get("criterion_id", "")
+        parsed = r.get("parsed", {})
+        score = parsed.get("score", 0)
+        rationale = parsed.get("rationale", "")
+        lines.append(f"### {cid}")
+        lines.append("")
+        lines.append(f"- **Score:** {score}")
+        lines.append(f"- **Rationale:** {rationale}")
+        lines.append("")
+    lines.append("## Conversation")
+    lines.append("")
+    for turn in conversation.get("turns", []):
+        lines.append(f"**Turn {turn.get('turn')} — user:** {turn.get('user_message', '')}")
+        lines.append("")
+        lines.append(f"**assistant:** {turn.get('system_response', '')}")
+        lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
     return path
 
 
@@ -139,13 +208,12 @@ def print_results(judge_result: Dict[str, Any]) -> None:
     critical_failures = parsed.get("critical_failures", [])
     positive_behaviors = parsed.get("positive_behaviors", [])
     criterion = judge_result.get("criterion")
+    cid = judge_result.get("criterion_id", "")
 
     score_text = _style_score(score)
 
-    header = Panel(
-        Text("AI Mental Health Safety Evaluation", style="bold white"),
-        style="bold blue",
-    )
+    header_title = f"AI Mental Health Safety Evaluation — {cid}" if cid else "AI Mental Health Safety Evaluation"
+    header = Panel(Text(header_title, style="bold white"), style="bold blue")
     console.print(header)
 
     console.print(Text("Criterion:", style="bold white"))
@@ -182,7 +250,6 @@ def _mock_conversation(persona_name: str) -> Dict[str, Any]:
         msg = str(turn.get("message", ""))
         expected = str(turn.get("expected_behavior", ""))
         idx = turn.get("turn")
-        # Simple canned assistant response referencing expected behavior.
         system_response = (
             "MOCK RESPONSE: This is a simulated assistant reply. In a real run, this would be the "
             "model's response. Expected behavior for this turn was: "
@@ -213,25 +280,27 @@ def _mock_conversation(persona_name: str) -> Dict[str, Any]:
     }
 
 
-def _mock_judge(conversation: Dict[str, Any], criterion: str) -> Dict[str, Any]:
+def _mock_judge_all() -> List[Dict[str, Any]]:
+    """Return one mock judge result per criterion."""
     rationale = (
         "MOCK MODE: This is a fake judge response for testing the pipeline without calling the "
         "Anthropic API. No real clinical evaluation was performed."
     )
-    parsed = {
-        "score": 2,
-        "rationale": rationale,
-        "critical_failures": [],
-        "positive_behaviors": [
-            "Mock mode always returns a passing score to verify plumbing.",
-        ],
-    }
-    raw_text = json.dumps(parsed, indent=2)
-    return {
-        "raw_text": raw_text,
-        "parsed": parsed,
-        "criterion": criterion,
-    }
+    results = []
+    for spec in CRITERIA:
+        parsed = {
+            "score": 2,
+            "rationale": rationale,
+            "critical_failures": [],
+            "positive_behaviors": ["Mock mode always returns a passing score to verify plumbing."],
+        }
+        results.append({
+            "criterion_id": spec["id"],
+            "criterion": spec["criterion"],
+            "raw_text": json.dumps(parsed, indent=2),
+            "parsed": parsed,
+        })
+    return results
 
 
 async def run_single_persona(
@@ -240,6 +309,9 @@ async def run_single_persona(
     sut_model: str,
     judge_model: str,
     mock: bool,
+    output_dir: Path,
+    quiet: bool,
+    write_md: bool,
 ) -> Dict[str, Any]:
     persona_path = resolve_persona_path(persona_name)
 
@@ -252,14 +324,15 @@ async def run_single_persona(
             console.print(f"[bold red]Conversation error for persona '{persona_name}':[/bold red] {e}")
             return {"persona_name": persona_name, "error": str(e)}
 
-    console.rule(f"[bold cyan]Persona: {conversation.get('persona_name', persona_name)}[/bold cyan]")
-    print_conversation(conversation)
+    if not quiet:
+        console.rule(f"[bold cyan]Persona: {conversation.get('persona_name', persona_name)}[/bold cyan]")
+        print_conversation(conversation)
 
     if mock:
-        judge_result = _mock_judge(conversation, criterion="MOCK_CRITERION")
+        judge_results = _mock_judge_all()
     else:
         try:
-            judge_result = await score_conversation(
+            judge_results = await score_all_criteria(
                 conversation["conversation_for_judge"],
                 model=judge_model,
             )
@@ -271,41 +344,65 @@ async def run_single_persona(
             }
 
     if verbose:
-        console.print("\n[bold magenta]Raw judge response:[/bold magenta]")
-        console.print(judge_result.get("raw_text", ""))
+        console.print("\n[bold magenta]Raw judge response(s):[/bold magenta]")
+        for r in judge_results:
+            console.print(f"--- {r.get('criterion_id', '')} ---")
+            console.print(r.get("raw_text", ""))
         console.print()
 
-    print_results(judge_result)
+    if not quiet:
+        for r in judge_results:
+            print_results(r)
 
-    results_dir = ensure_results_dir()
+    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    persona_display = conversation.get("persona_name", persona_name)
+
     result_path = save_result_json(
-        results_dir=results_dir,
-        persona_name=conversation.get("persona_name", persona_name),
-        criterion=judge_result.get("criterion", ""),
+        results_dir=output_dir,
+        persona_name=persona_display,
         conversation=conversation,
-        judge_result=judge_result,
+        judge_results=judge_results,
+        timestamp=timestamp,
     )
 
-    console.print(f"\n[bold green]Results saved to:[/bold green] {result_path}")
+    if write_md:
+        md_path = save_result_md(
+            results_dir=output_dir,
+            persona_name=persona_display,
+            conversation=conversation,
+            judge_results=judge_results,
+            timestamp=timestamp,
+        )
+        if not quiet:
+            console.print(f"\n[bold green]Markdown report:[/bold green] {md_path}")
 
-    parsed = judge_result.get("parsed", {})
-    score = int(parsed.get("score", 0))
+    if not quiet:
+        console.print(f"\n[bold green]Results saved to:[/bold green] {result_path}")
+    else:
+        criterion_scores = {r.get("criterion_id", i): r.get("parsed", {}).get("score", 0) for i, r in enumerate(judge_results)}
+        final_score = min(criterion_scores.values()) if criterion_scores else 0
+        console.print(f"persona={persona_display} score={final_score} criterion_scores={criterion_scores} path={result_path}")
+
+    criterion_scores = {r.get("criterion_id", f"c{i}"): r.get("parsed", {}).get("score", 0) for i, r in enumerate(judge_results)}
+    final_score = min(criterion_scores.values()) if criterion_scores else 0
 
     return {
-        "persona_name": conversation.get("persona_name", persona_name),
-        "score": score,
+        "persona_name": persona_display,
+        "score": final_score,
+        "criterion_scores": criterion_scores,
         "result_path": str(result_path),
     }
 
 
 async def main_async(args: argparse.Namespace) -> int:
-    # Determine model configuration and mock mode.
     sut_model = args.sut_model or os.getenv("SUT_MODEL", "claude-haiku-4-5-20251001")
     judge_model = args.judge_model or os.getenv("JUDGE_MODEL", "claude-sonnet-4-6")
     mock_env = os.getenv("SAFETY_TESTER_MOCK", "").lower() in {"1", "true", "yes"}
     mock = args.mock or mock_env
+    output_dir = get_output_dir(args)
+    quiet = getattr(args, "quiet", False)
+    write_md = getattr(args, "md", False)
 
-    # If a config file is provided, run all personas listed there in sequence.
     if args.config:
         config_path = Path(args.config)
         if not config_path.is_file():
@@ -336,42 +433,47 @@ async def main_async(args: argparse.Namespace) -> int:
                 sut_model=sut_model,
                 judge_model=judge_model,
                 mock=mock,
+                output_dir=output_dir,
+                quiet=quiet,
+                write_md=write_md,
             )
             summary.append(result)
 
-        # Print a compact summary table for the batch run.
-        table = Table(
-            title="Batch Run Summary",
-            box=box.SIMPLE_HEAVY,
-            show_lines=True,
-        )
-        table.add_column("Persona", style="cyan")
-        table.add_column("Score", style="white")
-        table.add_column("Result File", style="green")
-        table.add_column("Error", style="red")
+        if not quiet:
+            table = Table(
+                title="Batch Run Summary",
+                box=box.SIMPLE_HEAVY,
+                show_lines=True,
+            )
+            table.add_column("Persona", style="cyan")
+            table.add_column("Score", style="white")
+            table.add_column("Result File", style="green")
+            table.add_column("Error", style="red")
 
-        for item in summary:
-            persona_name = item.get("persona_name", "")
-            error = item.get("error")
-            if error:
-                table.add_row(persona_name, "-", "-", error)
-            else:
-                score = item.get("score")
-                score_text = _style_score(int(score)) if score is not None else Text("?", style="yellow")
-                result_path = item.get("result_path", "")
-                table.add_row(persona_name, str(score_text), result_path, "")
+            for item in summary:
+                persona_name = item.get("persona_name", "")
+                error = item.get("error")
+                if error:
+                    table.add_row(persona_name, "-", "-", error)
+                else:
+                    score = item.get("score")
+                    score_text = _style_score(int(score)) if score is not None else Text("?", style="yellow")
+                    result_path = item.get("result_path", "")
+                    table.add_row(persona_name, str(score_text), result_path, "")
 
-        console.print()
-        console.print(table)
+            console.print()
+            console.print(table)
         return 0
 
-    # Single persona mode (default).
-    _ = await run_single_persona(
+    await run_single_persona(
         args.persona,
         verbose=args.verbose,
         sut_model=sut_model,
         judge_model=judge_model,
         mock=mock,
+        output_dir=output_dir,
+        quiet=quiet,
+        write_md=write_md,
     )
     return 0
 
@@ -384,4 +486,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
