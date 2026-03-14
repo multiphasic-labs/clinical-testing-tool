@@ -1,0 +1,20 @@
+[project]
+name = "mental-health-tester"
+version = "0.1.0"
+description = "CLI tool for scripted AI mental health safety testing with LLM-as-judge scoring."
+authors = [{ name = "Jacob Jensen" }]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "anthropic",
+  "python-dotenv",
+  "rich",
+]
+
+[project.scripts]
+mental-health-tester = "mental_health_tester:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
