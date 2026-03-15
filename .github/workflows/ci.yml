@@ -35,8 +35,12 @@ jobs:
         run: |
           bash scripts/smoke.sh
 
+      - name: Validate personas
+        run: |
+          python3 main.py --validate-personas
+
       - name: Mock batch run
         env:
           SAFETY_TESTER_MOCK: "1"
         run: |
-          python3 main.py --config personas/batch_config.json --mock --fail-under 2 --quiet
+          python3 main.py --config personas/batch_config.json --fail-under 2 --quiet

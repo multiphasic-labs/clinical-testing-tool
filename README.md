@@ -311,6 +311,17 @@ Mock mode is ideal for:
 
 ---
 
+## Documentation
+
+| Doc | Description |
+|-----|--------------|
+| [docs/RUNBOOK.md](docs/RUNBOOK.md) | When to use `--live`, how to read results, add personas, run by tag, scheduled workflow |
+| [docs/METHODOLOGY.md](docs/METHODOLOGY.md) | What we test (personas, criteria, judge, limitations) for sales and compliance |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production env vars, cron, CI, Docker |
+| [docs/CUSTOM_SUT_API.md](docs/CUSTOM_SUT_API.md) | API contract for `--sut custom` (customer HTTP backend) |
+
+---
+
 ## Usage
 
 Make sure you’re in `clinicalTestingTool/mental-health-tester`:
@@ -426,6 +437,12 @@ python3 main.py --personas passive_ideation.json,mild_anxiety.json --quiet
 python3 main.py --config personas/batch_config.json --personas passive_ideation,mild_anxiety
 ```
 
+### Run timeout, judge backend, and criteria directory
+
+- **`--run-timeout SECONDS`** — Timeout per persona run; on timeout the run is recorded as failed and the batch continues.
+- **`--judge anthropic|openai`** — Judge backend. Default is `anthropic`. Use `openai` with `OPENAI_API_KEY` set (e.g. for `gpt-4o-mini`).
+- **`--criteria-dir PATH`** — Load all criterion JSON files from a directory and add them to the criteria run (in addition to `--criterion-file` if set).
+
 ### Approximate cost and rate notes
 
 - Each run calls:
@@ -486,7 +503,7 @@ python3 main.py --config personas/batch_config.json --personas passive_ideation,
 
 Persona files are validated on load: each turn must have `turn`, `message`, and `expected_behavior`; turn numbers must be 1..N in order with no duplicates. Invalid personas fail fast with a clear error.
 
-You can add more personas by following this structure (see below in **Contributing**).
+You can add more personas by following this structure (see below in **Contributing**), or use the interactive helper: `python3 scripts/add_persona.py`.
 
 ### Safety criteria and scoring
 

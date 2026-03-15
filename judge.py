@@ -122,6 +122,17 @@ def _load_api_key() -> str:
     return api_key
 
 
+def _load_judge_api_key(backend: str) -> str:
+    """Return API key for the given judge backend (anthropic or openai)."""
+    load_dotenv()
+    if (backend or "anthropic").lower() == "openai":
+        key = os.getenv("OPENAI_API_KEY")
+        if not key:
+            raise RuntimeError("OPENAI_API_KEY is not set (required for --judge openai).")
+        return key
+    return _load_api_key()
+
+
 def _get_timeout() -> float:
     load_dotenv()
     raw = os.getenv("API_TIMEOUT")
@@ -267,6 +278,64 @@ async def _score_one_criterion(
     }
 
 
+async def _score_one_criterion_openai(
+    conversation: List[Dict[str, Any]],
+    model: str,
+    criterion_spec: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Call OpenAI for one criterion. Returns same shape as _score_one_criterion."""
+    try:
+        from openai import AsyncOpenAI
+    except ImportError:
+        raise RuntimeError("Judge backend 'openai' requires the openai package. Install with: pip install openai")
+    api_key = _load_judge_api_key("openai")
+    timeout = _get_timeout()
+    client = AsyncOpenAI(api_key=api_key, timeout=timeout)
+    transcript_text = _format_conversation_text(conversation)
+    instructions = _build_judge_instructions(criterion_spec)
+    prompt = (
+        f"{instructions}\n\n"
+        "Here is the conversation transcript:\n\n"
+        "---------------- BEGIN TRANSCRIPT ----------------\n"
+        f"{transcript_text}\n"
+        "----------------- END TRANSCRIPT -----------------\n\n"
+        "Return ONLY the JSON object described above."
+    )
+    last_error: Optional[Exception] = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            try:
+                from rate_limit import acquire as rate_limit_acquire, is_active as rate_limit_active
+                if rate_limit_active():
+                    await rate_limit_acquire()
+            except ImportError:
+                pass
+            response = await client.chat.completions.create(
+                model=model or "gpt-4o-mini",
+                max_tokens=512,
+                temperature=0.0,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text_content = (response.choices[0].message.content or "").strip()
+            if not text_content:
+                raise RuntimeError("OpenAI judge returned no content.")
+            parsed = _parse_judge_response(text_content, criterion_spec["criterion"])
+            return {
+                "criterion_id": criterion_spec["id"],
+                "criterion": criterion_spec["criterion"],
+                "raw_text": text_content,
+                "parsed": parsed,
+            }
+        except Exception as e:
+            last_error = e
+            status = getattr(e, "status_code", None)
+            if status in RETRY_STATUSES and attempt < MAX_RETRIES:
+                await asyncio.sleep(1.0 * (attempt + 1))
+                continue
+            raise RuntimeError(f"OpenAI judge error: {e}") from e
+    raise RuntimeError(f"OpenAI judge error: {last_error}") from last_error
+
+
 async def score_conversation(
     conversation: List[Dict[str, Any]],
     model: str = "claude-sonnet-4-6",
@@ -322,17 +391,24 @@ async def score_all_criteria(
     model: str = "claude-sonnet-4-6",
     criterion_ids: Optional[List[str]] = None,
     extra_specs: Optional[List[Dict[str, Any]]] = None,
+    judge_backend: str = "anthropic",
 ) -> List[Dict[str, Any]]:
     """
     Score the conversation against selected criteria. Returns a list of judge result dicts.
-    If criterion_ids is provided, only those built-in criteria are run; extra_specs (e.g. from file) are appended.
+    judge_backend: "anthropic" (default) or "openai". For openai, use OPENAI_API_KEY and typically model like gpt-4o-mini.
     """
     specs = get_criteria_specs(criterion_ids, extra_specs)
-    api_key = _load_api_key()
-    timeout = _get_timeout()
-    client = AsyncAnthropic(api_key=api_key, timeout=timeout)
+    backend = (judge_backend or "anthropic").strip().lower()
     results: List[Dict[str, Any]] = []
-    for spec in specs:
-        one = await _score_one_criterion(client, conversation, model, spec)
-        results.append(one)
+    if backend == "openai":
+        for spec in specs:
+            one = await _score_one_criterion_openai(conversation, model, spec)
+            results.append(one)
+    else:
+        api_key = _load_judge_api_key(backend)
+        timeout = _get_timeout()
+        client = AsyncAnthropic(api_key=api_key, timeout=timeout)
+        for spec in specs:
+            one = await _score_one_criterion(client, conversation, model, spec)
+            results.append(one)
     return results

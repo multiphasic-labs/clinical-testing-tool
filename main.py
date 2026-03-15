@@ -300,6 +300,27 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Title for branded report (e.g. 'Run by Acme Corp'). Used with --branded-report.",
     )
+    parser.add_argument(
+        "--run-timeout",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help="Timeout per run (persona) in seconds. On timeout, the run is recorded as failed and the batch continues.",
+    )
+    parser.add_argument(
+        "--judge",
+        type=str,
+        default=None,
+        choices=["anthropic", "openai"],
+        help="Judge backend: anthropic (default) or openai. Requires OPENAI_API_KEY for openai.",
+    )
+    parser.add_argument(
+        "--criteria-dir",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Load all criterion JSON files from this directory and add them to the criteria run.",
+    )
     return parser.parse_args()
 
 
@@ -433,6 +454,7 @@ def save_result_json(
     judge_results: List[Dict[str, Any]],
     timestamp: Optional[str] = None,
     run_label: Optional[str] = None,
+    run_id: Optional[str] = None,
 ) -> Path:
     if timestamp is None:
         timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -459,6 +481,8 @@ def save_result_json(
         "criterion_scores": criterion_scores,
         "final_score": final_score,
     }
+    if run_id:
+        payload["run_id"] = run_id
 
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
@@ -722,6 +746,8 @@ async def run_single_persona(
     sut_backend: str = "anthropic",
     sut_options: Optional[Dict[str, Any]] = None,
     history_path: Optional[Path] = None,
+    run_id: Optional[str] = None,
+    judge_backend: str = "anthropic",
 ) -> Dict[str, Any]:
     persona_path = resolve_persona_path(persona_name)
 
@@ -756,6 +782,7 @@ async def run_single_persona(
                 model=judge_model,
                 criterion_ids=criterion_ids,
                 extra_specs=extra_criterion_specs,
+                judge_backend=judge_backend,
             )
         except Exception as e:
             console.print(f"[bold red]Judge error for persona '{persona_name}':[/bold red] {e}")
@@ -786,6 +813,7 @@ async def run_single_persona(
         judge_results=judge_results,
         timestamp=timestamp,
         run_label=run_label,
+        run_id=run_id,
     )
 
     if write_md:
@@ -901,6 +929,19 @@ def _load_criterion_file(path: Path) -> List[Dict[str, Any]]:
     return [spec]
 
 
+def _load_criteria_dir(dir_path: Path) -> List[Dict[str, Any]]:
+    """Load all criterion JSON files from a directory. Returns list of specs."""
+    if not dir_path.is_dir():
+        raise FileNotFoundError(f"Criteria directory not found: {dir_path}")
+    specs: List[Dict[str, Any]] = []
+    for f in sorted(dir_path.glob("*.json")):
+        try:
+            specs.extend(_load_criterion_file(f))
+        except (ValueError, json.JSONDecodeError) as e:
+            raise ValueError(f"{f.name}: {e}") from e
+    return specs
+
+
 def _print_prompt_comparison_table(summary: List[Dict[str, Any]], prompts_list: List[Tuple[str, str]]) -> None:
     """Print a table of persona x prompt -> score when running with --sut-prompts."""
     prompt_names = [p[0] for p in prompts_list]
@@ -959,10 +1000,14 @@ async def _run_one(
     sut_backend: str = "anthropic",
     sut_options: Optional[Dict[str, Any]] = None,
     history_path: Optional[Path] = None,
+    run_id: Optional[str] = None,
+    run_timeout: Optional[int] = None,
+    on_complete_msg: Optional[str] = None,
+    judge_backend: str = "anthropic",
 ) -> Dict[str, Any]:
     """Run a single persona (optionally under a semaphore for parallel batch)."""
     async def _do() -> Dict[str, Any]:
-        return await run_single_persona(
+        out = await run_single_persona(
             persona_name,
             verbose=args.verbose,
             sut_model=sut_model,
@@ -980,11 +1025,28 @@ async def _run_one(
             sut_backend=sut_backend,
             sut_options=sut_options,
             history_path=history_path,
+            run_id=run_id,
+            judge_backend=judge_backend,
         )
+        if on_complete_msg:
+            console.print(on_complete_msg)
+        return out
+    coro = _do()
+    if run_timeout and run_timeout > 0:
+        try:
+            return await asyncio.wait_for(coro, timeout=float(run_timeout))
+        except asyncio.TimeoutError:
+            return {
+                "persona_name": persona_name,
+                "run_label": run_label,
+                "error": f"Run timed out after {run_timeout}s",
+                "score": None,
+                "criterion_scores": {},
+            }
     if semaphore:
         async with semaphore:
-            return await _do()
-    return await _do()
+            return await coro
+    return await coro
 
 
 def _notify_failure(webhook_url: Optional[str], message: str, summary: Optional[List[Dict[str, Any]]] = None) -> None:
@@ -1161,12 +1223,45 @@ def _log_line(log_path: Optional[Path], line: str) -> None:
         pass
 
 
+def _compute_summary_by_tag(
+    summary: List[Dict[str, Any]],
+    tags_dir: Path,
+    fail_under: Optional[int],
+) -> Dict[str, Dict[str, int]]:
+    """Return dict tag -> {passed, failed, total} for batch summary persistence."""
+    tag_map = _load_persona_tags(tags_dir)
+    if not tag_map:
+        return {}
+    by_tag: Dict[str, List[Dict[str, Any]]] = {}
+    for item in summary:
+        pname = item.get("persona_name", "")
+        key = pname if pname.endswith(".json") else f"{pname}.json"
+        tags = tag_map.get(key) or tag_map.get(pname) or []
+        for t in (tags if isinstance(tags, list) else []) or []:
+            t = (t or "").strip()
+            if t:
+                by_tag.setdefault(t, []).append(item)
+    out: Dict[str, Dict[str, int]] = {}
+    for tag, items in by_tag.items():
+        n_passed = sum(
+            1
+            for i in items
+            if not i.get("error")
+            and (fail_under is None or (i.get("score") is not None and int(i["score"]) >= fail_under))
+        )
+        out[tag] = {"passed": n_passed, "failed": len(items) - n_passed, "total": len(items)}
+    return out
+
+
 def _write_batch_summary(
     output_dir: Path,
     summary: List[Dict[str, Any]],
     write_md: bool,
     write_csv: bool = False,
     audit: bool = True,
+    tags_dir: Optional[Path] = None,
+    fail_under: Optional[int] = None,
+    run_id: Optional[str] = None,
 ) -> None:
     """Write batch_summary_TIMESTAMP.json and optionally .md, .csv, and audit report to output_dir."""
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -1185,14 +1280,32 @@ def _write_batch_summary(
             "result_path": item.get("result_path"),
             "criterion_scores": cs,
         })
+    payload: Dict[str, Any] = {"schema_version": "1", "timestamp_utc": timestamp, "runs": rows}
+    if run_id:
+        payload["run_id"] = run_id
+    summary_by_tag = _compute_summary_by_tag(summary, tags_dir, fail_under) if tags_dir else {}
+    if summary_by_tag:
+        payload["summary_by_tag"] = summary_by_tag
     path = output_dir / f"batch_summary_{timestamp}.json"
     with path.open("w", encoding="utf-8") as f:
-        json.dump({"schema_version": "1", "timestamp_utc": timestamp, "runs": rows}, f, indent=2, ensure_ascii=False)
+        json.dump(payload, f, indent=2, ensure_ascii=False)
     if write_md:
         md_path = output_dir / f"batch_summary_{timestamp}.md"
         lines = [f"# Batch summary — {timestamp}", ""]
+        if run_id:
+            lines.append(f"**Run ID:** {run_id}")
+            lines.append("")
+        if summary_by_tag:
+            lines.append("## Summary by tag")
+            lines.append("")
+            for tag in sorted(summary_by_tag.keys()):
+                s = summary_by_tag[tag]
+                lines.append(f"- **{tag}:** {s['passed']} passed, {s['failed']} failed, {s['total']} total")
+            lines.append("")
+        lines.append("## Runs")
+        lines.append("")
         for r in rows:
-            lines.append(f"## {r['persona']}" + (f" ({r.get('run_label', '')})" if r.get("run_label") else ""))
+            lines.append(f"### {r['persona']}" + (f" ({r.get('run_label', '')})" if r.get("run_label") else ""))
             lines.append(f"- **Score:** {r['score']}")
             if r.get("error"):
                 lines.append(f"- **Error:** {r['error']}")
@@ -1236,8 +1349,21 @@ def _write_batch_summary(
                 for r in rows
             ],
         }
+        if run_id:
+            audit_data["run_id"] = run_id
+        if summary_by_tag:
+            audit_data["summary_by_tag"] = summary_by_tag
         with audit_path.open("w", encoding="utf-8") as f:
             json.dump(audit_data, f, indent=2, ensure_ascii=False)
+
+
+def _generate_run_id() -> str:
+    """Return a short unique run ID (timestamp + random suffix) for reproducibility."""
+    import random
+    import string
+    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    return f"{ts}_{suffix}"
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -1283,6 +1409,8 @@ async def main_async(args: argparse.Namespace) -> int:
             sut_options["response_path"] = rp
     elif sut_backend == "openai":
         sut_options["api_key"] = getattr(args, "sut_api_key", None) or os.getenv("OPENAI_API_KEY") or defaults.get("sut_api_key")
+    judge_backend = (getattr(args, "judge", None) or defaults.get("judge") or "anthropic").strip().lower()
+    run_timeout = getattr(args, "run_timeout", None)
     log_path = None
     if getattr(args, "log", None):
         log_path = Path(args.log)
@@ -1319,6 +1447,13 @@ async def main_async(args: argparse.Namespace) -> int:
         except (FileNotFoundError, ValueError) as e:
             console.print(f"[bold red]Criterion file: {e}[/bold red]")
             return 1
+    if getattr(args, "criteria_dir", None):
+        try:
+            from_dir = _load_criteria_dir(Path(args.criteria_dir))
+            extra_criterion_specs = (extra_criterion_specs or []) + from_dir
+        except (FileNotFoundError, ValueError) as e:
+            console.print(f"[bold red]Criteria dir: {e}[/bold red]")
+            return 1
     if criterion_ids:
         try:
             get_criteria_specs(criterion_ids, extra_criterion_specs)
@@ -1347,6 +1482,7 @@ async def main_async(args: argparse.Namespace) -> int:
             return 0
         if not quiet:
             console.print(f"Retrying {len(retry_list)} failed run(s).")
+        run_id = _generate_run_id()
         sem = asyncio.Semaphore(parallel) if parallel > 1 else None
         tasks = []
         for persona_name, run_label in retry_list:
@@ -1370,11 +1506,22 @@ async def main_async(args: argparse.Namespace) -> int:
                     sut_backend,
                     sut_options,
                     history_path,
+                    run_id=run_id,
+                    run_timeout=run_timeout,
+                    judge_backend=judge_backend,
                 )
             )
         summary = list(await asyncio.gather(*tasks))
         if batch_summary and len(summary) > 1:
-            _write_batch_summary(output_dir, summary, write_md=write_md, write_csv=write_csv)
+            _write_batch_summary(
+                output_dir,
+                summary,
+                write_md=write_md,
+                write_csv=write_csv,
+                tags_dir=project_root / "personas",
+                fail_under=getattr(args, "fail_under", None),
+                run_id=run_id,
+            )
         if not quiet:
             table = Table(title="Retry Summary", box=box.SIMPLE_HEAVY, show_lines=True)
             table.add_column("Persona", style="cyan")
@@ -1467,6 +1614,9 @@ async def main_async(args: argparse.Namespace) -> int:
             )
             return 0
 
+        run_id = _generate_run_id()
+        total_config_runs = len(personas) * (len(prompts_list) if prompts_list else 1)
+        progress_msg = (lambda p: f"  Completed: {p}") if (not quiet and total_config_runs > 1) else (lambda p: None)
         summary: list[Dict[str, Any]] = []
         sem = asyncio.Semaphore(parallel) if parallel > 1 else None
         tasks = []
@@ -1495,6 +1645,10 @@ async def main_async(args: argparse.Namespace) -> int:
                             sut_backend,
                             sut_options,
                             history_path,
+                            run_id=run_id,
+                            run_timeout=run_timeout,
+                            on_complete_msg=progress_msg(persona_name),
+                            judge_backend=judge_backend,
                         )
                     )
             else:
@@ -1518,13 +1672,25 @@ async def main_async(args: argparse.Namespace) -> int:
                         sut_backend,
                         sut_options,
                         history_path,
+                        run_id=run_id,
+                        run_timeout=run_timeout,
+                        on_complete_msg=progress_msg(persona_name),
+                        judge_backend=judge_backend,
                     )
                 )
         if tasks:
             summary = list(await asyncio.gather(*tasks))
 
         if batch_summary and len(summary) > 1:
-            _write_batch_summary(output_dir, summary, write_md=write_md, write_csv=write_csv)
+            _write_batch_summary(
+                output_dir,
+                summary,
+                write_md=write_md,
+                write_csv=write_csv,
+                tags_dir=tags_dir,
+                fail_under=getattr(args, "fail_under", None),
+                run_id=run_id,
+            )
 
         if not quiet:
             table = Table(
@@ -1626,6 +1792,9 @@ async def main_async(args: argparse.Namespace) -> int:
         )
         return 0
 
+    run_id = _generate_run_id()
+    total_runs = len(persona_list) * (len(prompts_list) if prompts_list else 1)
+    progress_msg = (lambda p: f"  Completed: {p}") if (not quiet and total_runs > 1) else (lambda p: None)
     sem = asyncio.Semaphore(parallel) if parallel > 1 else None
     tasks = []
     for persona_name in persona_list:
@@ -1651,6 +1820,10 @@ async def main_async(args: argparse.Namespace) -> int:
                         sut_backend,
                         sut_options,
                         history_path,
+                        run_id=run_id,
+                        run_timeout=run_timeout,
+                        on_complete_msg=progress_msg(persona_name),
+                        judge_backend=judge_backend,
                     )
                 )
         else:
@@ -1674,12 +1847,24 @@ async def main_async(args: argparse.Namespace) -> int:
                     sut_backend,
                     sut_options,
                     history_path,
+                    run_id=run_id,
+                    run_timeout=run_timeout,
+                    on_complete_msg=progress_msg(persona_name),
+                    judge_backend=judge_backend,
                 )
             )
     summary = list(await asyncio.gather(*tasks)) if tasks else []
 
     if batch_summary and len(summary) > 1:
-        _write_batch_summary(output_dir, summary, write_md=write_md, write_csv=write_csv)
+        _write_batch_summary(
+            output_dir,
+            summary,
+            write_md=write_md,
+            write_csv=write_csv,
+            tags_dir=tags_dir,
+            fail_under=getattr(args, "fail_under", None),
+            run_id=run_id,
+        )
 
     if not quiet and len(summary) > 1:
         table = Table(
