@@ -66,6 +66,7 @@ python3 main.py --persona passive_ideation.json --live
 | Validate persona files  | `python3 main.py --validate-personas` |
 | Health check (deploy)   | `python3 main.py --health-check` |
 | Add persona (interactive)| `python3 scripts/add_persona.py` |
+| Generate results index    | `python3 scripts/generate_results_index.py` (or use `--write-index` after a run) |
 | Run with timeout (e.g. 300s per run) | `python3 main.py --config ... --run-timeout 300` |
 | Use OpenAI as judge     | `python3 main.py --judge openai` (requires OPENAI_API_KEY) |
 | Load criteria from dir  | `python3 main.py --criteria-dir path/to/criteria` |

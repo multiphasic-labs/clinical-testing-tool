@@ -437,6 +437,22 @@ python3 main.py --personas passive_ideation.json,mild_anxiety.json --quiet
 python3 main.py --config personas/batch_config.json --personas passive_ideation,mild_anxiety
 ```
 
+### Results index (browse runs in the browser)
+
+Generate `results/index.html` to list recent result files and batch summaries with links to JSON and report HTMLs:
+
+```bash
+python3 scripts/generate_results_index.py --output-dir results
+# Open results/index.html in a browser (file:// or any static server).
+```
+
+To regenerate the index automatically after each run:
+
+```bash
+python3 main.py --persona passive_ideation.json --write-index
+python3 main.py --config personas/batch_config.json --batch-summary --write-index
+```
+
 ### Run timeout, judge backend, and criteria directory
 
 - **`--run-timeout SECONDS`** — Timeout per persona run; on timeout the run is recorded as failed and the batch continues.

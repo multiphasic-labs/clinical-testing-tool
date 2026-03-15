@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -198,6 +199,11 @@ def parse_args() -> argparse.Namespace:
         "--csv",
         action="store_true",
         help="When using --batch-summary, also write batch_summary_TIMESTAMP.csv.",
+    )
+    parser.add_argument(
+        "--write-index",
+        action="store_true",
+        help="After writing results, regenerate results/index.html (or OUTPUT_DIR/index.html) for browsing runs.",
     )
     parser.add_argument(
         "--config-file",
@@ -1146,6 +1152,24 @@ def _write_branded_report(
         pass
 
 
+def _write_results_index(output_dir: Path) -> None:
+    """Regenerate results/index.html (or OUTPUT_DIR/index.html) by running the index script."""
+    project_root = Path(__file__).resolve().parent
+    script = project_root / "scripts" / "generate_results_index.py"
+    if not script.is_file():
+        return
+    try:
+        subprocess.run(
+            [os.environ.get("PYTHON", "python3"), str(script), "--output-dir", str(output_dir)],
+            cwd=str(project_root),
+            check=False,
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def _maybe_save_baseline_and_notify_success(
     args: argparse.Namespace,
     output_dir: Path,
@@ -1173,6 +1197,8 @@ def _maybe_save_baseline_and_notify_success(
         _notify_success(notify_webhook, summary, msg)
     if getattr(args, "branded_report", None) and summary:
         _write_branded_report(Path(args.branded_report), summary, getattr(args, "report_branding_title", None))
+    if getattr(args, "write_index", False):
+        _write_results_index(output_dir)
 
 
 def _save_baseline(
