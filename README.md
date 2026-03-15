@@ -91,7 +91,7 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
 - **Notify on failure**: `--notify-webhook URL` (or `NOTIFY_WEBHOOK`) POSTs a JSON payload to the URL when the run exits with code 1 (e.g. Slack incoming webhook).
 - **Custom SUT response path**: For `--sut custom`, use `--sut-response-path` (e.g. `data.reply`) if your API returns the assistant text at a different JSON path. See [docs/CUSTOM_SUT_API.md](docs/CUSTOM_SUT_API.md).
 - **Docker**: `Dockerfile` and `docker-compose.yml` for consistent runs; see [Docker](#docker) below.
-- **Pre-commit**: Optional `.pre-commit-config.yaml` (Black + Ruff); run `pre-commit install` to enable.
+- **Pre-commit**: Optional `.pre-commit-config.yaml` (Black, Ruff, and persona validation when `personas/*.json` change); run `pre-commit install` to enable.
 - **Retry failed**: `--retry-failed` (and optional `--retry-failed-from PATH`) re-runs only runs that had an error or scored below `--fail-under` from a batch summary.
 - **Rate limiting**: `--max-requests-per-minute N` caps API requests when using `--parallel` (ignored in mock).
 - **Audit export**: Each batch summary run can write `batch_audit_TIMESTAMP.json` with full run metadata for compliance.
@@ -156,6 +156,15 @@ persona=passive_ideation score=2 criterion_scores={'crisis_urgency': 2, 'no_diag
 ```
 
 With full output (no `--quiet`), you get a conversation transcript table, per-criterion evaluation panels (score, rationale, critical failures, positive behaviors), and the result file path. Result JSON includes `timestamp_utc`, `persona_name`, `conversation`, `judge_results`, `criterion_scores`, and `final_score`.
+
+Batch run with `--quiet` and `--batch-summary` (mock):
+
+```bash
+$ python3 main.py --config personas/batch_config.json --batch-summary --quiet
+Passed: 22, Failed: 0
+```
+
+So **“Passed: N, Failed: 0”** means all personas met the score threshold; any failure is reported in the table and in the batch summary JSON.
 
 ---
 
@@ -474,6 +483,7 @@ With **`--quiet`**, a one-line summary is printed at the end: `Passed: N, Failed
 - Each run calls:
   - The SUT model once per persona turn.
   - The judge model once per conversation.
+- **Retries:** Both SUT and judge retry on 429 and 5xx with backoff, so transient API errors are retried before failing the run.
 - Cost scales linearly with:
   - Number of turns per persona.
   - Number of personas in a batch.
@@ -593,6 +603,17 @@ The **final score** reported is the minimum across criteria (all must pass for a
 ---
 
 ## Troubleshooting
+
+### Common errors
+
+- **401 or 403 (Unauthorized / Forbidden)**  
+  Check that your API key is set (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY` for judge/SUT) and that you passed **`--live`**. By default the tool runs in mock mode and does not call the API.
+
+- **Run or request timeouts**  
+  Use **`--run-timeout N`** (seconds per persona) so a stuck run is recorded as failed and the batch continues. Increase **`API_TIMEOUT`** in `.env` if the judge or SUT often needs more time.
+
+- **"No personas match --persona-tags" or empty batch**  
+  Check that `personas/persona_tags.json` has the right tags for your persona files, and that you’re in the correct directory. Use **`--list-tags`** to see which personas have which tags.
 
 - **"Your credit balance is too low to access the Anthropic API"**  
   Add credits or a payment method in [Anthropic Console](https://console.anthropic.com/) → Plans & Billing. Use an API key from the same workspace where you added credits. Create a new key after adding credits if the old one was created before.

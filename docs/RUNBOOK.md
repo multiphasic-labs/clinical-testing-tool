@@ -28,7 +28,7 @@ python3 main.py --persona passive_ideation.json --live
   - `conversation` (full transcript)
   - `judge_results` (per-criterion score, rationale, critical_failures, positive_behaviors)
   - `criterion_scores`, `final_score` (min across criteria)
-- **Batch run:** With `--batch-summary`, you get `batch_summary_TIMESTAMP.json` (and optional `.md`, `.csv`) with one row per persona: score, error, result_path, criterion_scores; and `summary_by_tag` (passed/failed/total per tag) when persona_tags.json exists. A **Summary by tag** table is also printed when not quiet.
+- **Batch run:** With `--batch-summary`, you get `batch_summary_TIMESTAMP.json` (and optional `.md`, `.csv`) with one row per persona: score, error, result_path, criterion_scores; and `summary_by_tag` (passed/failed/total per tag) when persona_tags.json exists. A **Summary by tag** table is also printed when not quiet. Runs that hit **`--run-timeout`** appear with `error: "Run timed out after Ns"` in the summary.
 - **Audit:** With `--batch-summary`, an optional `batch_audit_TIMESTAMP.json` is written for compliance (schema_version, run_id, runs, timestamps).
 
 ---
@@ -48,7 +48,10 @@ python3 main.py --persona passive_ideation.json --live
 
 - **File:** `.github/workflows/scheduled.yml`
 - **Default:** Runs in **mock** (no API key). Every Monday 00:00 UTC (and on `workflow_dispatch`). Runs `python3 main.py --config personas/batch_config.json --fail-under 2 --quiet --batch-summary`. No secrets required.
-- **To use the real API on schedule:** Add `ANTHROPIC_API_KEY` (and optionally `NOTIFY_WEBHOOK`) as repo secrets, then edit the workflow and add `--live` to the `python3 main.py ...` command in the "Run safety tester" step.
+- **To use the real API on schedule (weekly live run):**
+  1. In GitHub: Settings → Secrets and variables → Actions. Add `ANTHROPIC_API_KEY` (required for `--live`). Optionally add `NOTIFY_WEBHOOK` (Slack or other) and `NOTIFY_FORMAT=slack`.
+  2. Edit `.github/workflows/scheduled.yml`: in the "Run safety tester" step, add `--live` to the command, e.g. `python3 main.py --config personas/batch_config.json --fail-under 2 --quiet --batch-summary --live --notify-webhook "${{ secrets.NOTIFY_WEBHOOK }}"`.
+  3. Optional: add `--notify-success`, `--save-baseline`, or `--write-index`. After a run, use `scripts/export_compliance.py --last --out compliance.zip` to bundle results for auditors.
 
 ---
 

@@ -60,8 +60,8 @@ Use a virtualenv or system Python that has the dependencies installed.
 
 ## CI (GitHub Actions)
 
-- **On every push/PR:** The default `CI` workflow runs tests and a mock batch (see `.github/workflows/ci.yml`). No secrets required.
-- **Scheduled run:** Use `.github/workflows/scheduled.yml` to run the full batch on a schedule (e.g. weekly). Add `ANTHROPIC_API_KEY` and optionally `NOTIFY_WEBHOOK` as repository secrets, then enable the workflow.
+- **On every push/PR:** The default `CI` workflow runs tests, `--validate-personas`, and a mock batch (see `.github/workflows/ci.yml`). No secrets required.
+- **Scheduled run (mock by default):** `.github/workflows/scheduled.yml` runs the full batch weekly (e.g. Monday 00:00 UTC). By default it uses **mock** (no API key). See [RUNBOOK](RUNBOOK.md#scheduled-workflow-weekly) for how to switch to a **weekly live run** (add `ANTHROPIC_API_KEY` and `--live`, optional `NOTIFY_WEBHOOK`, `--notify-success`, `--save-baseline`, or `--write-index`).
 
 ## Docker
 

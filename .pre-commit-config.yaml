@@ -2,6 +2,15 @@
 # Install: pip install pre-commit && pre-commit install
 # Run manually: pre-commit run --all-files
 repos:
+  - repo: local
+    hooks:
+      - id: validate-personas
+        name: Validate persona JSON files
+        entry: python3 main.py --validate-personas
+        language: system
+        pass_filenames: false
+        files: ^personas/.*\.json$
+
   - repo: https://github.com/psf/black
     rev: 24.2.0
     hooks:
