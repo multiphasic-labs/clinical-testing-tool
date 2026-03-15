@@ -139,6 +139,24 @@ You can override the default models via CLI flags or environment variables:
   - CLI: `--judge-model YOUR_MODEL_NAME`
   - Env: `JUDGE_MODEL=YOUR_MODEL_NAME`
 
+### SUT system prompt
+
+The system prompt for the chatbot under test defaults to the built-in "Calm" prompt. You can override it with a file:
+
+- **CLI:** `--sut-system-prompt path/to/prompt.txt`
+- **Env:** `SUT_SYSTEM_PROMPT=path/to/prompt.txt` (path to a file; its contents are used)
+
+Use this to test different chatbot configs without changing code.
+
+### Criteria and persona selection
+
+- **`--criteria crisis_urgency,no_diagnosis`** — Run only the listed criteria (reduces judge API calls). Default: all.
+- **`--personas p1,p2`** — With `--config`: run only these personas from the config. Without `--config`: run these personas as a batch (no config file needed). Names can be filenames (`passive_ideation.json`) or stems (`passive_ideation`).
+
+### Fail-under (CI)
+
+- **`--fail-under N`** — Exit with code 1 if any run has final score &lt; N. Use in CI to fail the pipeline when the system under test regresses. Example: `python3 main.py --config personas/batch_config.json --fail-under 2 --quiet`
+
 ### Mock mode (offline / no-API)
 
 Mock mode lets you exercise the pipeline without making real Anthropic API calls:
@@ -221,11 +239,31 @@ You’ll get:
 ### Example command with custom models
 
 ```bash
-python main.py \
+python3 main.py \
   --persona passive_ideation.json \
   --sut-model claude-3.7-sonnet-20250219 \
   --judge-model claude-3.7-sonnet-20250219 \
   --verbose
+```
+
+### CI: fail if score drops
+
+```bash
+python3 main.py --config personas/batch_config.json --fail-under 2 --quiet
+# Exit 0 only if every persona has final score >= 2
+```
+
+### Run a subset of criteria or personas
+
+```bash
+# Only run crisis_urgency criterion (one judge call per conversation)
+python3 main.py --persona passive_ideation.json --criteria crisis_urgency
+
+# Run two personas without a config file
+python3 main.py --personas passive_ideation.json,mild_anxiety.json --quiet
+
+# From config, run only passive and mild_anxiety
+python3 main.py --config personas/batch_config.json --personas passive_ideation,mild_anxiety
 ```
 
 ### Approximate cost and rate notes

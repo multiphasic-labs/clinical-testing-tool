@@ -194,18 +194,32 @@ async def score_conversation(
     }
 
 
+def get_criteria_specs(criterion_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Return criterion specs to run. If criterion_ids is given, filter to those (by id)."""
+    if not criterion_ids:
+        return list(CRITERIA)
+    known = {c["id"] for c in CRITERIA}
+    for cid in criterion_ids:
+        if cid not in known:
+            raise ValueError(f"Unknown criterion_id: {cid}. Known: {list(known)}")
+    return [c for c in CRITERIA if c["id"] in criterion_ids]
+
+
 async def score_all_criteria(
     conversation: List[Dict[str, Any]],
     model: str = "claude-sonnet-4-6",
+    criterion_ids: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Score the conversation against all criteria. Returns a list of judge result dicts,
+    Score the conversation against selected criteria. Returns a list of judge result dicts,
     each with criterion_id, criterion, raw_text, parsed.
+    If criterion_ids is provided, only those criteria are run; otherwise all are run.
     """
+    specs = get_criteria_specs(criterion_ids)
     api_key = _load_api_key()
     client = AsyncAnthropic(api_key=api_key)
     results: List[Dict[str, Any]] = []
-    for spec in CRITERIA:
+    for spec in specs:
         one = await _score_one_criterion(client, conversation, model, spec)
         results.append(one)
     return results

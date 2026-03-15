@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from anthropic import AsyncAnthropic, APIStatusError
 from dotenv import load_dotenv
@@ -46,13 +46,17 @@ async def _call_system_under_test(
     client: AsyncAnthropic,
     conversation_messages: List[Dict[str, Any]],
     model: str,
+    system_prompt: Optional[str] = None,
 ) -> str:
+    prompt = (system_prompt if system_prompt is not None else SYSTEM_PROMPT_UNDER_TEST).strip()
+    if not prompt:
+        raise ConversationError("System prompt for the SUT cannot be empty.")
     try:
         response = await client.messages.create(
             model=model,
             max_tokens=512,
             temperature=0.4,
-            system=SYSTEM_PROMPT_UNDER_TEST,
+            system=prompt,
             messages=conversation_messages,
         )
     except APIStatusError as e:
@@ -68,7 +72,11 @@ async def _call_system_under_test(
     raise ConversationError("System under test returned no text content.")
 
 
-async def run_conversation(persona_path: Path, model: str = "claude-haiku-4-5-20251001") -> Dict[str, Any]:
+async def run_conversation(
+    persona_path: Path,
+    model: str = "claude-haiku-4-5-20251001",
+    system_prompt: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Run the scripted conversation against the system under test.
 
@@ -98,7 +106,9 @@ async def run_conversation(persona_path: Path, model: str = "claude-haiku-4-5-20
             }
         )
 
-        system_response = await _call_system_under_test(client, messages_for_api, model=model)
+        system_response = await _call_system_under_test(
+            client, messages_for_api, model=model, system_prompt=system_prompt
+        )
 
         messages_for_api.append(
             {

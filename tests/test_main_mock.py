@@ -35,6 +35,10 @@ def test_mock_run_single_persona_quiet() -> None:
         output_dir=None,
         quiet=True,
         md=False,
+        fail_under=None,
+        sut_system_prompt=None,
+        criteria=None,
+        personas=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -60,3 +64,57 @@ def test_mock_run_via_subprocess() -> None:
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert "score=" in result.stdout
     assert "path=" in result.stdout
+
+
+def test_fail_under_exits_1_when_below() -> None:
+    """With --fail-under 3, mock score 2 should cause exit 1."""
+    import main
+    from contextlib import redirect_stdout
+    from io import StringIO
+
+    args = argparse.Namespace(
+        config=None,
+        persona="passive_ideation.json",
+        verbose=False,
+        sut_model="x",
+        judge_model="x",
+        mock=True,
+        output_dir=None,
+        quiet=True,
+        md=False,
+        fail_under=3,
+        sut_system_prompt=None,
+        criteria=None,
+        personas=None,
+    )
+    buf = StringIO()
+    with redirect_stdout(buf):
+        exit_code = asyncio.run(main.main_async(args))
+    assert exit_code == 1
+
+
+def test_fail_under_exits_0_when_above() -> None:
+    """With --fail-under 1, mock score 2 should cause exit 0."""
+    import main
+    from contextlib import redirect_stdout
+    from io import StringIO
+
+    args = argparse.Namespace(
+        config=None,
+        persona="passive_ideation.json",
+        verbose=False,
+        sut_model="x",
+        judge_model="x",
+        mock=True,
+        output_dir=None,
+        quiet=True,
+        md=False,
+        fail_under=1,
+        sut_system_prompt=None,
+        criteria=None,
+        personas=None,
+    )
+    buf = StringIO()
+    with redirect_stdout(buf):
+        exit_code = asyncio.run(main.main_async(args))
+    assert exit_code == 0

@@ -13,7 +13,7 @@ from rich.table import Table
 from rich.text import Text
 
 from runner import ConversationError, load_persona, run_conversation
-from judge import CRITERIA, score_all_criteria
+from judge import CRITERIA, get_criteria_specs, score_all_criteria
 
 
 console = Console()
@@ -72,6 +72,31 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Also write a Markdown report alongside the JSON result.",
     )
+    parser.add_argument(
+        "--fail-under",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Exit with code 1 if any run has final score < N (for CI). Default: no threshold.",
+    )
+    parser.add_argument(
+        "--sut-system-prompt",
+        type=str,
+        default=None,
+        help="Path to a file containing the system prompt for the SUT. Overridden by SUT_SYSTEM_PROMPT env (path).",
+    )
+    parser.add_argument(
+        "--criteria",
+        type=str,
+        default=None,
+        help="Comma-separated criterion ids to run (e.g. crisis_urgency,no_diagnosis). Default: all.",
+    )
+    parser.add_argument(
+        "--personas",
+        type=str,
+        default=None,
+        help="Comma-separated persona names to run. With --config: filter to these; without: run these as a batch.",
+    )
     return parser.parse_args()
 
 
@@ -95,6 +120,20 @@ def get_output_dir(args: argparse.Namespace) -> Path:
         path = project_root / "results"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def get_sut_system_prompt(args: argparse.Namespace) -> Optional[str]:
+    """
+    Resolve SUT system prompt: --sut-system-prompt (path) or SUT_SYSTEM_PROMPT env (path).
+    If set, read file and return content; otherwise return None (use runner default).
+    """
+    raw = getattr(args, "sut_system_prompt", None) or os.getenv("SUT_SYSTEM_PROMPT")
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_file():
+        raise FileNotFoundError(f"SUT system prompt file not found: {path}")
+    return path.read_text(encoding="utf-8").strip()
 
 
 def save_result_json(
@@ -280,14 +319,15 @@ def _mock_conversation(persona_name: str) -> Dict[str, Any]:
     }
 
 
-def _mock_judge_all() -> List[Dict[str, Any]]:
-    """Return one mock judge result per criterion."""
+def _mock_judge_all(criterion_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Return one mock judge result per selected criterion."""
+    specs = get_criteria_specs(criterion_ids)
     rationale = (
         "MOCK MODE: This is a fake judge response for testing the pipeline without calling the "
         "Anthropic API. No real clinical evaluation was performed."
     )
     results = []
-    for spec in CRITERIA:
+    for spec in specs:
         parsed = {
             "score": 2,
             "rationale": rationale,
@@ -312,6 +352,8 @@ async def run_single_persona(
     output_dir: Path,
     quiet: bool,
     write_md: bool,
+    system_prompt: Optional[str] = None,
+    criterion_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     persona_path = resolve_persona_path(persona_name)
 
@@ -319,7 +361,9 @@ async def run_single_persona(
         conversation = _mock_conversation(persona_name)
     else:
         try:
-            conversation = await run_conversation(persona_path, model=sut_model)
+            conversation = await run_conversation(
+                persona_path, model=sut_model, system_prompt=system_prompt
+            )
         except ConversationError as e:
             console.print(f"[bold red]Conversation error for persona '{persona_name}':[/bold red] {e}")
             return {"persona_name": persona_name, "error": str(e)}
@@ -329,12 +373,13 @@ async def run_single_persona(
         print_conversation(conversation)
 
     if mock:
-        judge_results = _mock_judge_all()
+        judge_results = _mock_judge_all(criterion_ids=criterion_ids)
     else:
         try:
             judge_results = await score_all_criteria(
                 conversation["conversation_for_judge"],
                 model=judge_model,
+                criterion_ids=criterion_ids,
             )
         except Exception as e:
             console.print(f"[bold red]Judge error for persona '{persona_name}':[/bold red] {e}")
@@ -394,6 +439,13 @@ async def run_single_persona(
     }
 
 
+def _parse_list_arg(value: Optional[str]) -> Optional[List[str]]:
+    """Parse comma-separated string into list of stripped non-empty strings."""
+    if not value:
+        return None
+    return [s.strip() for s in value.split(",") if s.strip()]
+
+
 async def main_async(args: argparse.Namespace) -> int:
     sut_model = args.sut_model or os.getenv("SUT_MODEL", "claude-haiku-4-5-20251001")
     judge_model = args.judge_model or os.getenv("JUDGE_MODEL", "claude-sonnet-4-6")
@@ -402,6 +454,21 @@ async def main_async(args: argparse.Namespace) -> int:
     output_dir = get_output_dir(args)
     quiet = getattr(args, "quiet", False)
     write_md = getattr(args, "md", False)
+    criterion_ids = _parse_list_arg(getattr(args, "criteria", None))
+    personas_override = _parse_list_arg(getattr(args, "personas", None))
+
+    try:
+        system_prompt = get_sut_system_prompt(args)
+    except FileNotFoundError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        return 1
+
+    if criterion_ids:
+        try:
+            get_criteria_specs(criterion_ids)
+        except ValueError as e:
+            console.print(f"[bold red]{e}[/bold red]")
+            return 1
 
     if args.config:
         config_path = Path(args.config)
@@ -420,6 +487,18 @@ async def main_async(args: argparse.Namespace) -> int:
         if not isinstance(personas, list) or not personas:
             console.print("[bold red]Config must contain a non-empty 'personas' list.[/bold red]")
             return 1
+        if personas_override is not None:
+            # Filter to only requested personas (match by filename or stem, e.g. passive_ideation or passive_ideation.json)
+            allowed = {p.strip() for p in personas_override}
+            def _match(p: str) -> bool:
+                if p in allowed:
+                    return True
+                stem = Path(p).stem if "." in p else p
+                return stem in allowed or p.replace(".json", "") in allowed
+            personas = [p for p in personas if _match(p)]
+            if not personas:
+                console.print("[bold red]No personas left after --personas filter.[/bold red]")
+                return 1
 
         summary: list[Dict[str, Any]] = []
         for persona_name in personas:
@@ -436,6 +515,8 @@ async def main_async(args: argparse.Namespace) -> int:
                 output_dir=output_dir,
                 quiet=quiet,
                 write_md=write_md,
+                system_prompt=system_prompt,
+                criterion_ids=criterion_ids,
             )
             summary.append(result)
 
@@ -463,18 +544,73 @@ async def main_async(args: argparse.Namespace) -> int:
 
             console.print()
             console.print(table)
+
+        fail_under = getattr(args, "fail_under", None)
+        if fail_under is not None:
+            for item in summary:
+                if "error" in item:
+                    return 1
+                s = item.get("score")
+                if s is not None and int(s) < fail_under:
+                    if not quiet:
+                        console.print(f"[bold red]Score {s} below --fail-under {fail_under}[/bold red]")
+                    return 1
         return 0
 
-    await run_single_persona(
-        args.persona,
-        verbose=args.verbose,
-        sut_model=sut_model,
-        judge_model=judge_model,
-        mock=mock,
-        output_dir=output_dir,
-        quiet=quiet,
-        write_md=write_md,
-    )
+    # Single-persona or --personas batch (no config file)
+    if personas_override is not None:
+        persona_list = personas_override
+    else:
+        persona_list = [args.persona]
+
+    summary = []
+    for persona_name in persona_list:
+        result = await run_single_persona(
+            persona_name,
+            verbose=args.verbose,
+            sut_model=sut_model,
+            judge_model=judge_model,
+            mock=mock,
+            output_dir=output_dir,
+            quiet=quiet,
+            write_md=write_md,
+            system_prompt=system_prompt,
+            criterion_ids=criterion_ids,
+        )
+        summary.append(result)
+
+    if not quiet and len(summary) > 1:
+        table = Table(
+            title="Batch Run Summary",
+            box=box.SIMPLE_HEAVY,
+            show_lines=True,
+        )
+        table.add_column("Persona", style="cyan")
+        table.add_column("Score", style="white")
+        table.add_column("Result File", style="green")
+        table.add_column("Error", style="red")
+        for item in summary:
+            persona_name = item.get("persona_name", "")
+            error = item.get("error")
+            if error:
+                table.add_row(persona_name, "-", "-", error)
+            else:
+                score = item.get("score")
+                score_text = _style_score(int(score)) if score is not None else Text("?", style="yellow")
+                table.add_row(persona_name, str(score_text), item.get("result_path", ""), "")
+        console.print()
+        console.print(table)
+
+    fail_under = getattr(args, "fail_under", None)
+    if fail_under is not None:
+        for item in summary:
+            if "error" in item:
+                return 1
+            s = item.get("score")
+            if s is not None and int(s) < fail_under:
+                if not quiet:
+                    console.print(f"[bold red]Score {s} below --fail-under {fail_under}[/bold red]")
+                return 1
     return 0
 
 
