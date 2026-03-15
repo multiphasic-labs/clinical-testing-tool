@@ -118,6 +118,16 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated tags (e.g. crisis,support). When set, only run personas that have at least one of these tags in personas/persona_tags.json.",
     )
     parser.add_argument(
+        "--list-tags",
+        action="store_true",
+        help="Print tags from persona_tags.json and which personas have each tag; then exit.",
+    )
+    parser.add_argument(
+        "--validate-personas",
+        action="store_true",
+        help="Load each persona in personas/ (or --personas-dir), validate schema, and exit 0 if all OK.",
+    )
+    parser.add_argument(
         "--log",
         type=str,
         default=None,
@@ -1540,6 +1550,8 @@ async def main_async(args: argparse.Namespace) -> int:
 
             console.print()
             console.print(table)
+            if len(summary) > 1:
+                _print_tag_summary(summary, tags_dir, getattr(args, "fail_under", None))
 
         if prompts_list and len(summary) > 0 and not quiet:
             _print_prompt_comparison_table(summary, prompts_list)
@@ -1690,6 +1702,8 @@ async def main_async(args: argparse.Namespace) -> int:
                 table.add_row(persona_name, str(score_text), item.get("result_path", ""), "")
         console.print()
         console.print(table)
+        if len(summary) > 1:
+            _print_tag_summary(summary, tags_dir, getattr(args, "fail_under", None))
 
     if prompts_list and len(summary) > 0 and not quiet:
         _print_prompt_comparison_table(summary, prompts_list)
@@ -1751,6 +1765,98 @@ def _list_personas() -> None:
         console.print(f"  {p.name}")
     if not files:
         console.print("  (none)")
+
+
+def _list_tags(tags_dir: Path) -> None:
+    """Print tags from persona_tags.json and which personas have each tag."""
+    tag_map = _load_persona_tags(tags_dir)
+    if not tag_map:
+        console.print("No persona_tags.json found or it is empty.")
+        console.print(f"Expected: {tags_dir / 'persona_tags.json'}")
+        return
+    # Invert: tag -> [personas]
+    by_tag: Dict[str, List[str]] = {}
+    for persona, tags in tag_map.items():
+        for t in tags if isinstance(tags, list) else []:
+            t = (t or "").strip()
+            if t:
+                by_tag.setdefault(t, []).append(persona)
+    console.print("Tags and personas (from persona_tags.json):")
+    for tag in sorted(by_tag.keys()):
+        console.print(f"  [bold]{tag}[/bold]")
+        for p in sorted(by_tag[tag]):
+            console.print(f"    {p}")
+    untagged = [p for p in tag_map if not (tag_map.get(p) or [])]
+    if untagged:
+        console.print("  (no tag):")
+        for p in sorted(untagged):
+            console.print(f"    {p}")
+
+
+def _run_validate_personas(args: argparse.Namespace) -> int:
+    """Load each persona in personas/ (or --personas-dir), validate schema; return 0 if all OK else 1."""
+    project_root = Path(__file__).resolve().parent
+    personas_dir = Path(args.personas_dir) if getattr(args, "personas_dir", None) else (project_root / "personas")
+    if not personas_dir.is_dir():
+        console.print(f"[bold red]Not a directory: {personas_dir}[/bold red]")
+        return 1
+    names = _discover_personas_from_dir(personas_dir)
+    if not names:
+        console.print("[yellow]No persona JSON files found.[/yellow]")
+        return 0
+    failed = 0
+    for name in sorted(names):
+        path = personas_dir / name if (personas_dir / name).is_file() else resolve_persona_path(name)
+        try:
+            load_persona(path)
+            console.print(f"  [green]OK[/green] {name}")
+        except ConversationError as e:
+            console.print(f"  [red]FAIL[/red] {name}: {e}")
+            failed += 1
+    if failed:
+        console.print(f"\n[bold red]{failed} persona(s) failed validation.[/bold red]")
+        return 1
+    console.print(f"\n[green]All {len(names)} persona(s) valid.[/green]")
+    return 0
+
+
+def _print_tag_summary(
+    summary: List[Dict[str, Any]],
+    tags_dir: Path,
+    fail_under: Optional[int],
+) -> None:
+    """Print a short summary of pass/fail counts by tag (when persona_tags.json exists)."""
+    tag_map = _load_persona_tags(tags_dir)
+    if not tag_map:
+        return
+    by_tag: Dict[str, List[Dict[str, Any]]] = {}
+    for item in summary:
+        pname = item.get("persona_name", "")
+        key = pname if pname.endswith(".json") else f"{pname}.json"
+        tags = tag_map.get(key) or tag_map.get(pname) or []
+        for t in (tags if isinstance(tags, list) else []) or []:
+            t = (t or "").strip()
+            if t:
+                by_tag.setdefault(t, []).append(item)
+    if not by_tag:
+        return
+    console.print()
+    table = Table(title="Summary by tag", box=box.SIMPLE, show_header=True)
+    table.add_column("Tag", style="cyan")
+    table.add_column("Passed", style="green")
+    table.add_column("Failed", style="red")
+    table.add_column("Total", style="white")
+    for tag in sorted(by_tag.keys()):
+        items = by_tag[tag]
+        passed = sum(
+            1
+            for i in items
+            if not i.get("error")
+            and (fail_under is None or (i.get("score") is not None and int(i["score"]) >= fail_under))
+        )
+        failed = len(items) - passed
+        table.add_row(tag, str(passed), str(failed), str(len(items)))
+    console.print(table)
 
 
 def _print_dry_run(
@@ -1820,9 +1926,15 @@ def main() -> None:
     if getattr(args, "list_personas", False):
         _list_personas()
         raise SystemExit(0)
+    if getattr(args, "list_tags", False):
+        _list_tags(Path(__file__).resolve().parent / "personas")
+        raise SystemExit(0)
     if getattr(args, "list_criteria", False):
         _list_criteria()
         raise SystemExit(0)
+    if getattr(args, "validate_personas", False):
+        exit_code = _run_validate_personas(args)
+        raise SystemExit(exit_code)
     exit_code = asyncio.run(main_async(args))
     raise SystemExit(exit_code)
 

@@ -67,7 +67,9 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
   - `--output-dir` or `OUTPUT_DIR`: custom output directory.
   - `--md`: also write a Markdown report alongside the JSON.
   - `--report html`: also write an HTML report with transcript and criterion scores.
-  - `--list-personas` / `--list-criteria`: list available persona files or criterion IDs and exit.
+  - `--list-personas` / `--list-criteria` / `--list-tags`: list available persona files, criterion IDs, or tags (from persona_tags.json) and exit.
+  - `--validate-personas`: load and validate all persona JSON in personas/ (or `--personas-dir`); exit 0 if all valid.
+  - **Runbook**: See [docs/RUNBOOK.md](docs/RUNBOOK.md) for when to use `--live`, how to read results, add personas, run by tag, and the scheduled workflow.
 - **Batch runs**:
   - JSON config listing multiple personas to run sequentially, with a batch summary table.
   - `--parallel N`: run up to N personas (or persona×prompt runs) in parallel to speed up batches.

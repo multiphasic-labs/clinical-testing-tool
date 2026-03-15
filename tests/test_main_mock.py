@@ -72,6 +72,8 @@ def test_mock_run_single_persona_quiet() -> None:
         personas_dir=None,
         persona_tags=None,
         live=False,
+        list_tags=False,
+        validate_personas=False,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -151,6 +153,8 @@ def test_fail_under_exits_1_when_below() -> None:
         personas_dir=None,
         persona_tags=None,
         live=False,
+        list_tags=False,
+        validate_personas=False,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -210,6 +214,8 @@ def test_fail_under_exits_0_when_above() -> None:
         personas_dir=None,
         persona_tags=None,
         live=False,
+        list_tags=False,
+        validate_personas=False,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -269,6 +275,8 @@ def test_dry_run_exits_0_and_prints_plan() -> None:
         personas_dir=None,
         persona_tags=None,
         live=False,
+        list_tags=False,
+        validate_personas=False,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -351,6 +359,8 @@ def test_history_append_writes_one_line() -> None:
             personas_dir=None,
             persona_tags=None,
             live=False,
+            list_tags=False,
+            validate_personas=False,
         )
         with redirect_stdout(StringIO()):
             asyncio.run(main.main_async(args))
@@ -471,6 +481,8 @@ def test_result_json_has_schema_version() -> None:
             personas_dir=None,
             persona_tags=None,
             live=False,
+            list_tags=False,
+            validate_personas=False,
         )
         with redirect_stdout(StringIO()):
             asyncio.run(main.main_async(args))
@@ -478,3 +490,74 @@ def test_result_json_has_schema_version() -> None:
         assert len(jsons) >= 1
         data = json.loads(jsons[0].read_text(encoding="utf-8"))
         assert data.get("schema_version") == "1"
+
+
+def test_list_tags_exits_0_and_prints_tags() -> None:
+    """--list-tags prints tags and personas then exits 0."""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "main.py"), "--list-tags"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "crisis" in result.stdout or "support" in result.stdout or "boundary" in result.stdout
+    assert "passive_ideation" in result.stdout or "persona" in result.stdout.lower()
+
+
+def test_personas_dir_runs_discovered_personas() -> None:
+    """--personas-dir personas runs all discovered personas (mock)."""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "main.py"), "--personas-dir", "personas", "--persona-tags", "crisis", "--quiet"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0
+    # Should see at least passive_ideation and active_ideation (crisis tag)
+    assert "passive_ideation" in result.stdout or "active_ideation" in result.stdout
+    assert "score=2" in result.stdout
+
+
+def test_default_run_is_mock() -> None:
+    """Without --live, run uses mock (no API key required)."""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "main.py"), "--persona", "passive_ideation.json", "--quiet"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        env={k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"},
+    )
+    assert result.returncode == 0
+    assert "score=2" in result.stdout
+    assert "ANTHROPIC_API_KEY" not in result.stderr or "not set" not in result.stderr.lower()
+
+
+def test_validate_personas_all_ok() -> None:
+    """--validate-personas exits 0 when all personas in personas/ are valid."""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "main.py"), "--validate-personas"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "valid" in result.stdout.lower() or "OK" in result.stdout
+
+
+def test_validate_personas_reports_invalid() -> None:
+    """--validate-personas exits 1 and reports when a persona file is invalid."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        bad = Path(tmp) / "bad.json"
+        bad.write_text('[{"turn": 1}]', encoding="utf-8")  # missing message, expected_behavior
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "main.py"), "--validate-personas", "--personas-dir", tmp],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+        )
+    assert result.returncode == 1
+    assert "FAIL" in result.stdout or "fail" in result.stdout.lower()
+    assert "missing" in result.stdout.lower() or "required" in result.stdout.lower()

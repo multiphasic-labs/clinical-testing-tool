@@ -42,12 +42,28 @@ Thanks for your interest in contributing. This tool is meant for **offline testi
      }
      ```
 
-4. **Run it locally**:
+4. **Optionally tag the persona** for filtered runs: add an entry to `personas/persona_tags.json`, e.g. `"anxiety_checkin.json": ["boundary"]`. Use tags like `crisis`, `boundary`, `support`. Then run only that tag: `python3 main.py --personas-dir personas --persona-tags boundary`.
+
+5. **Run it locally** (default is mock—no API key or charges):
 
    ```bash
    cd mental-health-tester
-   python main.py --persona personas/anxiety_checkin.json --verbose
+   python3 main.py --persona anxiety_checkin.json --verbose
    ```
+
+   To use the real API, pass **`--live`** (requires `ANTHROPIC_API_KEY` in `.env`):
+
+   ```bash
+   python3 main.py --persona anxiety_checkin.json --live --verbose
+   ```
+
+---
+
+## Default: mock mode; use `--live` for real API
+
+- **Runs are in mock mode by default**—no API calls, no key required, no charges. Ideal for development and CI.
+- To hit the real Anthropic (and judge) API, pass **`--live`** on the command line. Make sure `ANTHROPIC_API_KEY` is set in `.env`.
+- You can force mock even when scripting: use `--mock` or set `SAFETY_TESTER_MOCK=1` in the environment.
 
 ---
 
@@ -75,19 +91,25 @@ When changing prompts, keep instructions explicit about:
 
 ## Running in mock mode during development
 
-Mock mode is designed so you can iterate on UX and plumbing without consuming API credits.
+Mock mode is the **default**—no flags needed. Use it to iterate on UX and plumbing without consuming API credits.
 
-- Enable mock mode via CLI:
+- Default (mock):
 
   ```bash
-  python main.py --persona passive_ideation.json --mock --verbose
+  python3 main.py --persona passive_ideation.json --verbose
   ```
 
-- Or via env:
+- To force mock in scripts or CI:
 
   ```bash
   export SAFETY_TESTER_MOCK=1
-  python main.py --persona passive_ideation.json --verbose
+  python3 main.py --persona passive_ideation.json
+  ```
+
+- To use the real API:
+
+  ```bash
+  python3 main.py --persona passive_ideation.json --live --verbose
   ```
 
 In mock mode:

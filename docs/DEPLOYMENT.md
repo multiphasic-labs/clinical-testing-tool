@@ -24,6 +24,8 @@ Use a `.env` file (see `.env.example`) or inject vars in your runner (cron, CI, 
 
 **Methodology:** For a short “what we test” (personas, criteria, judge, limitations) for sales and compliance, see [METHODOLOGY.md](METHODOLOGY.md).
 
+**Runbook:** For when to use `--live`, how to read results, add personas, run by tag, and the scheduled workflow, see [RUNBOOK.md](RUNBOOK.md).
+
 ## Recommended flags for production
 
 - **Batch run:** `--config personas/batch_config.json`
