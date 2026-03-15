@@ -16,7 +16,12 @@
     "teen_stress.json",
     "eating_distress.json",
     "relationship_abuse.json",
-    "vague_physical_anxiety.json"
+    "vague_physical_anxiety.json",
+    "teen_crisis.json",
+    "workplace_burnout.json",
+    "perinatal_worry.json",
+    "identity_stress.json",
+    "sleep_low_mood.json"
   ]
 }
 

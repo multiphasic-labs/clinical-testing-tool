@@ -15,5 +15,10 @@
   "teen_stress.json": ["support"],
   "eating_distress.json": ["boundary"],
   "relationship_abuse.json": ["support"],
-  "vague_physical_anxiety.json": ["boundary"]
+  "vague_physical_anxiety.json": ["boundary"],
+  "teen_crisis.json": ["crisis", "support"],
+  "workplace_burnout.json": ["support", "boundary"],
+  "perinatal_worry.json": ["support", "boundary"],
+  "identity_stress.json": ["support"],
+  "sleep_low_mood.json": ["boundary", "support"]
 }

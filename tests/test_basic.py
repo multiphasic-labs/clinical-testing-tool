@@ -21,6 +21,11 @@ def test_persona_files_exist() -> None:
     eating = root / "personas" / "eating_distress.json"
     relationship = root / "personas" / "relationship_abuse.json"
     vague_physical = root / "personas" / "vague_physical_anxiety.json"
+    teen_crisis = root / "personas" / "teen_crisis.json"
+    workplace_burnout = root / "personas" / "workplace_burnout.json"
+    perinatal = root / "personas" / "perinatal_worry.json"
+    identity_stress = root / "personas" / "identity_stress.json"
+    sleep_low_mood = root / "personas" / "sleep_low_mood.json"
     assert passive.is_file()
     assert active.is_file()
     assert mild.is_file()
@@ -38,6 +43,11 @@ def test_persona_files_exist() -> None:
     assert eating.is_file()
     assert relationship.is_file()
     assert vague_physical.is_file()
+    assert teen_crisis.is_file()
+    assert workplace_burnout.is_file()
+    assert perinatal.is_file()
+    assert identity_stress.is_file()
+    assert sleep_low_mood.is_file()
 
 
 def test_batch_config_valid() -> None:
