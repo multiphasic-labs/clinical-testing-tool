@@ -334,6 +334,13 @@ def parse_args() -> argparse.Namespace:
         metavar="PATH",
         help="Load all criterion JSON files from this directory and add them to the criteria run.",
     )
+    parser.add_argument(
+        "--max-runs",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Cap batch at N persona runs (e.g. --personas-dir personas --max-runs 3 for a quick smoke).",
+    )
     return parser.parse_args()
 
 
@@ -1706,6 +1713,11 @@ async def main_async(args: argparse.Namespace) -> int:
         if not personas:
             console.print("[bold red]No personas match --persona-tags.[/bold red]")
             return 1
+        max_runs = getattr(args, "max_runs", None)
+        if max_runs is not None and max_runs > 0:
+            personas = personas[:max_runs]
+            if not quiet:
+                console.print(f"[dim]Capped to --max-runs {max_runs}: running {len(personas)} persona(s).[/dim]")
 
         if getattr(args, "dry_run", False):
             _print_dry_run(
@@ -1884,6 +1896,11 @@ async def main_async(args: argparse.Namespace) -> int:
     if not persona_list:
         console.print("[bold red]No personas match --persona-tags.[/bold red]")
         return 1
+    max_runs = getattr(args, "max_runs", None)
+    if max_runs is not None and max_runs > 0:
+        persona_list = persona_list[:max_runs]
+        if not quiet:
+            console.print(f"[dim]Capped to --max-runs {max_runs}: running {len(persona_list)} persona(s).[/dim]")
 
     if getattr(args, "dry_run", False):
         _print_dry_run(

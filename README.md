@@ -456,6 +456,7 @@ python3 main.py --config personas/batch_config.json --batch-summary --write-inde
 ### Run timeout, judge backend, and criteria directory
 
 - **`--run-timeout SECONDS`** — Timeout per persona run; on timeout the run is recorded as failed and the batch continues.
+- **`--max-runs N`** — Cap batch at N persona runs (e.g. `--personas-dir personas --max-runs 3` for a quick smoke).
 - **`--judge anthropic|openai`** — Judge backend. Default is `anthropic`. Use `openai` with `OPENAI_API_KEY` set. When using OpenAI, set **`JUDGE_MODEL_OPENAI`** (e.g. `gpt-4o-mini`) or use config `judge_model_openai`.
 - **`--criteria-dir PATH`** — Load all criterion JSON files from a directory and add them to the criteria run (in addition to `--criterion-file` if set).
 - **`--notify-format slack`** — Format webhook payload as Slack blocks (use with Slack incoming webhook URL). Env: `NOTIFY_FORMAT`.

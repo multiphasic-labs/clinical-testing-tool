@@ -79,6 +79,7 @@ def test_mock_run_single_persona_quiet() -> None:
         criteria_dir=None,
         write_index=False,
         notify_format=None,
+        max_runs=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -165,6 +166,7 @@ def test_fail_under_exits_1_when_below() -> None:
         criteria_dir=None,
         write_index=False,
         notify_format=None,
+        max_runs=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -231,6 +233,7 @@ def test_fail_under_exits_0_when_above() -> None:
         criteria_dir=None,
         write_index=False,
         notify_format=None,
+        max_runs=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -297,6 +300,7 @@ def test_dry_run_exits_0_and_prints_plan() -> None:
         criteria_dir=None,
         write_index=False,
         notify_format=None,
+        max_runs=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -386,6 +390,7 @@ def test_history_append_writes_one_line() -> None:
             criteria_dir=None,
             write_index=False,
             notify_format=None,
+            max_runs=None,
         )
         with redirect_stdout(StringIO()):
             asyncio.run(main.main_async(args))
@@ -513,6 +518,7 @@ def test_result_json_has_schema_version() -> None:
             criteria_dir=None,
             write_index=False,
             notify_format=None,
+            max_runs=None,
         )
         with redirect_stdout(StringIO()):
             asyncio.run(main.main_async(args))

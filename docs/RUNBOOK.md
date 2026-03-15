@@ -70,6 +70,7 @@ python3 main.py --persona passive_ideation.json --live
 | Run with timeout (e.g. 300s per run) | `python3 main.py --config ... --run-timeout 300` |
 | Use OpenAI as judge     | `python3 main.py --judge openai` (set `JUDGE_MODEL_OPENAI` or config `judge_model_openai`) |
 | Load criteria from dir  | `python3 main.py --criteria-dir path/to/criteria` |
+| Quick smoke (first N)    | `python3 main.py --personas-dir personas --max-runs 3` |
 | Slack webhook format    | `python3 main.py ... --notify-webhook URL --notify-format slack` |
 | Trend (last N batches)  | `python3 scripts/trend_batch_summaries.py --last 10 [--html trend.html]` |
 | Compliance export       | `python3 scripts/export_compliance.py --last --out bundle.zip` |

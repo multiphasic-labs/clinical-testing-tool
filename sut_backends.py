@@ -84,6 +84,10 @@ async def anthropic_backend(
         except APIStatusError as e:
             last_error = e
             status = getattr(e, "status_code", None)
+            if status in (401, 403):
+                raise ConversationError(
+                    f"Anthropic API error (SUT): {e}. Check ANTHROPIC_API_KEY and that you used --live."
+                ) from e
             if status in RETRY_STATUSES and attempt < MAX_RETRIES:
                 await asyncio.sleep(1.0 * (attempt + 1))
                 continue
@@ -146,6 +150,10 @@ async def openai_backend(
         except Exception as e:
             last_error = e
             status = getattr(e, "status_code", None) or getattr(getattr(e, "response", None), "status_code", None)
+            if status in (401, 403):
+                raise ConversationError(
+                    f"OpenAI API error (SUT): {e}. Check OPENAI_API_KEY and that you used --live."
+                ) from e
             if status in RETRY_STATUSES and attempt < MAX_RETRIES:
                 await asyncio.sleep(1.0 * (attempt + 1))
                 continue

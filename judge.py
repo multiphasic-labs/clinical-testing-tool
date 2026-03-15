@@ -249,6 +249,10 @@ async def _score_one_criterion(
         except APIStatusError as e:
             last_error = e
             status = getattr(e, "status_code", None)
+            if status in (401, 403):
+                raise RuntimeError(
+                    f"Anthropic API error (judge): {e}. Check ANTHROPIC_API_KEY and that you used --live."
+                ) from e
             if status in RETRY_STATUSES and attempt < MAX_RETRIES:
                 await asyncio.sleep(1.0 * (attempt + 1))
                 continue
@@ -328,7 +332,11 @@ async def _score_one_criterion_openai(
             }
         except Exception as e:
             last_error = e
-            status = getattr(e, "status_code", None)
+            status = getattr(e, "status_code", None) or getattr(getattr(e, "response", None), "status_code", None)
+            if status in (401, 403):
+                raise RuntimeError(
+                    f"OpenAI judge error: {e}. Check OPENAI_API_KEY (for --judge openai) and that you used --live."
+                ) from e
             if status in RETRY_STATUSES and attempt < MAX_RETRIES:
                 await asyncio.sleep(1.0 * (attempt + 1))
                 continue
