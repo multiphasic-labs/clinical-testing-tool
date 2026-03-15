@@ -59,6 +59,9 @@ def test_mock_run_single_persona_quiet() -> None:
         dry_run=False,
         history=None,
         notify_webhook=None,
+        retry_failed=False,
+        retry_failed_from=None,
+        max_requests_per_minute=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -126,6 +129,9 @@ def test_fail_under_exits_1_when_below() -> None:
         dry_run=False,
         history=None,
         notify_webhook=None,
+        retry_failed=False,
+        retry_failed_from=None,
+        max_requests_per_minute=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -173,8 +179,165 @@ def test_fail_under_exits_0_when_above() -> None:
         dry_run=False,
         history=None,
         notify_webhook=None,
+        retry_failed=False,
+        retry_failed_from=None,
+        max_requests_per_minute=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
         exit_code = asyncio.run(main.main_async(args))
     assert exit_code == 0
+
+
+def test_dry_run_exits_0_and_prints_plan() -> None:
+    """--dry-run prints plan and exits 0 without calling API."""
+    import main
+    from contextlib import redirect_stdout
+    from io import StringIO
+
+    args = argparse.Namespace(
+        config=None,
+        persona="passive_ideation.json",
+        verbose=False,
+        sut_model="x",
+        judge_model="x",
+        mock=False,
+        output_dir=None,
+        quiet=False,
+        md=False,
+        fail_under=None,
+        sut_system_prompt=None,
+        criteria=None,
+        personas=None,
+        log=None,
+        batch_summary=False,
+        fail_under_criteria=None,
+        compare_baseline=False,
+        baseline=None,
+        list_personas=False,
+        list_criteria=False,
+        criterion_file=None,
+        report=None,
+        sut_prompts=None,
+        parallel=1,
+        csv=False,
+        config_file=None,
+        sut="anthropic",
+        sut_endpoint=None,
+        sut_api_key=None,
+        sut_response_path=None,
+        dry_run=True,
+        history=None,
+        notify_webhook=None,
+        retry_failed=False,
+        retry_failed_from=None,
+        max_requests_per_minute=None,
+    )
+    buf = StringIO()
+    with redirect_stdout(buf):
+        exit_code = asyncio.run(main.main_async(args))
+    out = buf.getvalue()
+    assert exit_code == 0
+    assert "Dry run" in out
+    assert "passive_ideation" in out
+
+
+def test_notify_failure_none_does_nothing() -> None:
+    """_notify_failure with None URL does not raise."""
+    import main
+    main._notify_failure(None, "test message")
+    main._notify_failure("", "test")
+
+
+def test_load_retry_failed_empty_dir_returns_empty() -> None:
+    """_load_retry_failed with empty dir returns []."""
+    import main
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        out = main._load_retry_failed(None, Path(d), fail_under=2)
+    assert out == []
+
+
+def test_history_append_writes_one_line() -> None:
+    """With --history, a successful run appends one JSON line to the file."""
+    import main
+    from contextlib import redirect_stdout
+    from io import StringIO
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        hist_path = Path(f.name)
+    try:
+        args = argparse.Namespace(
+            config=None,
+            persona="passive_ideation.json",
+            verbose=False,
+            sut_model="x",
+            judge_model="x",
+            mock=True,
+            output_dir=None,
+            quiet=True,
+            md=False,
+            fail_under=None,
+            sut_system_prompt=None,
+            criteria=None,
+            personas=None,
+            log=None,
+            batch_summary=False,
+            fail_under_criteria=None,
+            compare_baseline=False,
+            baseline=None,
+            list_personas=False,
+            list_criteria=False,
+            criterion_file=None,
+            report=None,
+            sut_prompts=None,
+            parallel=1,
+            csv=False,
+            config_file=None,
+            sut="anthropic",
+            sut_endpoint=None,
+            sut_api_key=None,
+            sut_response_path=None,
+            dry_run=False,
+            history=str(hist_path),
+            notify_webhook=None,
+            retry_failed=False,
+            retry_failed_from=None,
+            max_requests_per_minute=None,
+        )
+        with redirect_stdout(StringIO()):
+            asyncio.run(main.main_async(args))
+        lines = [l for l in hist_path.read_text().strip().split("\n") if l]
+        assert len(lines) >= 1
+        import json
+        record = json.loads(lines[-1])
+        assert "persona_name" in record or "timestamp_utc" in record
+    finally:
+        hist_path.unlink(missing_ok=True)
+
+
+def test_load_retry_failed_from_json() -> None:
+    """_load_retry_failed finds failed runs from summary JSON."""
+    import main
+    import tempfile
+    summary = {
+        "runs": [
+            {"persona": "p1", "run_label": "", "score": 1, "error": None},
+            {"persona": "p2", "run_label": "", "score": 2, "error": None},
+            {"persona": "p3", "run_label": "prompt_a", "error": "Connection failed"},
+        ]
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        import json
+        json.dump({"runs": summary["runs"]}, f)
+        path = Path(f.name)
+    try:
+        out = main._load_retry_failed(path, Path(tempfile.gettempdir()), fail_under=2)
+        # p1 score 1 < 2, p3 has error; p2 passes
+        assert len(out) == 2
+        personas = [x[0] for x in out]
+        assert "p1" in personas
+        assert "p3" in personas
+    finally:
+        path.unlink()

@@ -202,6 +202,12 @@ async def _score_one_criterion(
     last_error: Optional[Exception] = None
     for attempt in range(MAX_RETRIES + 1):
         try:
+            try:
+                from rate_limit import acquire as rate_limit_acquire, is_active as rate_limit_active
+                if rate_limit_active():
+                    await rate_limit_acquire()
+            except ImportError:
+                pass
             response = await client.messages.create(
                 model=model,
                 max_tokens=512,

@@ -90,6 +90,12 @@ async def run_conversation(
 
         messages.append({"role": "user", "content": user_message})
 
+        try:
+            from rate_limit import acquire as rate_limit_acquire, is_active as rate_limit_active
+            if rate_limit_active():
+                await rate_limit_acquire()
+        except ImportError:
+            pass
         system_response = await adapter(
             messages,
             system_prompt=system_prompt,

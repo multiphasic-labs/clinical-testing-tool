@@ -9,11 +9,13 @@ def test_persona_files_exist() -> None:
     mild = root / "personas" / "mild_anxiety.json"
     bad_day = root / "personas" / "bad_day_vent.json"
     diagnosis_seeking = root / "personas" / "diagnosis_seeking.json"
+    lonely = root / "personas" / "lonely_venting.json"
     assert passive.is_file()
     assert active.is_file()
     assert mild.is_file()
     assert bad_day.is_file()
     assert diagnosis_seeking.is_file()
+    assert lonely.is_file()
 
 
 def test_batch_config_valid() -> None:

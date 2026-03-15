@@ -219,6 +219,25 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="On exit code 1, POST a JSON payload to this URL (e.g. Slack incoming webhook). Env: NOTIFY_WEBHOOK.",
     )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Re-run only failed runs from a batch summary (use with --retry-failed-from or latest in output dir).",
+    )
+    parser.add_argument(
+        "--retry-failed-from",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Batch summary JSON for --retry-failed. If omitted, use latest batch_summary_*.json in output dir.",
+    )
+    parser.add_argument(
+        "--max-requests-per-minute",
+        type=int,
+        default=None,
+        metavar="N",
+        help="When using --parallel, cap at N SUT+judge requests per minute (approx). Ignored in mock.",
+    )
     return parser.parse_args()
 
 
@@ -869,6 +888,41 @@ def _notify_failure(webhook_url: Optional[str], message: str, summary: Optional[
         pass
 
 
+def _load_retry_failed(
+    path: Optional[Path],
+    output_dir: Path,
+    fail_under: Optional[int],
+) -> List[Tuple[str, Optional[str]]]:
+    """Load batch summary and return list of (persona_name, run_label) for failed runs (error or score < fail_under)."""
+    if path is None or not path.is_file():
+        # Find latest batch_summary_*.json in output_dir
+        summaries = sorted(output_dir.glob("batch_summary_*.json"), key=lambda p: p.name, reverse=True)
+        if not summaries:
+            return []
+        path = summaries[0]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    runs = data.get("runs") or []
+    out: List[Tuple[str, Optional[str]]] = []
+    for r in runs:
+        if r.get("error"):
+            persona = (r.get("persona") or "").strip()
+            if persona:
+                label = (r.get("run_label") or "").strip() or None
+                out.append((persona, label))
+            continue
+        if fail_under is not None:
+            score = r.get("score")
+            if score is None or int(score) < fail_under:
+                persona = (r.get("persona") or "").strip()
+                if persona:
+                    label = (r.get("run_label") or "").strip() or None
+                    out.append((persona, label))
+    return out
+
+
 def _append_history(history_path: Optional[Path], record: Dict[str, Any]) -> None:
     """Append one JSON object (as a single line) to the history file."""
     if not history_path:
@@ -896,8 +950,9 @@ def _write_batch_summary(
     summary: List[Dict[str, Any]],
     write_md: bool,
     write_csv: bool = False,
+    audit: bool = True,
 ) -> None:
-    """Write batch_summary_TIMESTAMP.json and optionally .md and .csv to output_dir."""
+    """Write batch_summary_TIMESTAMP.json and optionally .md, .csv, and audit report to output_dir."""
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     rows = []
     criterion_columns: List[str] = []
@@ -947,6 +1002,25 @@ def _write_batch_summary(
                 for cid in criterion_columns:
                     row[cid] = r["criterion_scores"].get(cid, "")
                 w.writerow(row)
+    if audit:
+        audit_path = output_dir / f"batch_audit_{timestamp}.json"
+        audit_data = {
+            "timestamp_utc": timestamp,
+            "run_count": len(rows),
+            "runs": [
+                {
+                    "persona": r["persona"],
+                    "run_label": r.get("run_label", ""),
+                    "score": r.get("score"),
+                    "error": r.get("error"),
+                    "result_path": r.get("result_path"),
+                    "criterion_scores": r.get("criterion_scores", {}),
+                }
+                for r in rows
+            ],
+        }
+        with audit_path.open("w", encoding="utf-8") as f:
+            json.dump(audit_data, f, indent=2, ensure_ascii=False)
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -996,6 +1070,11 @@ async def main_async(args: argparse.Namespace) -> int:
     if getattr(args, "history", None) or os.getenv("HISTORY_FILE"):
         history_path = Path(args.history or os.getenv("HISTORY_FILE", ""))
     notify_webhook = getattr(args, "notify_webhook", None) or os.getenv("NOTIFY_WEBHOOK") or None
+    try:
+        import rate_limit
+        rate_limit.set_max_per_minute(getattr(args, "max_requests_per_minute", None))
+    except ImportError:
+        pass
 
     try:
         prompts_list = get_sut_prompts_list(args)
@@ -1034,6 +1113,83 @@ async def main_async(args: argparse.Namespace) -> int:
     except ValueError as e:
         console.print(f"[bold red]{e}[/bold red]")
         return 1
+
+    # --retry-failed: re-run only failed runs from a batch summary
+    if getattr(args, "retry_failed", False):
+        retry_from = getattr(args, "retry_failed_from", None)
+        path = Path(retry_from) if retry_from else None
+        fail_under = getattr(args, "fail_under", None)
+        retry_list = _load_retry_failed(path, output_dir, fail_under)
+        if not retry_list:
+            if not quiet:
+                console.print("No failed runs to retry (or no batch summary found).")
+            return 0
+        if not quiet:
+            console.print(f"Retrying {len(retry_list)} failed run(s).")
+        sem = asyncio.Semaphore(parallel) if parallel > 1 else None
+        tasks = []
+        for persona_name, run_label in retry_list:
+            tasks.append(
+                _run_one(
+                    persona_name,
+                    args,
+                    sut_model,
+                    judge_model,
+                    mock,
+                    output_dir,
+                    quiet,
+                    write_md,
+                    criterion_ids,
+                    log_path,
+                    extra_criterion_specs,
+                    system_prompt,
+                    run_label,
+                    report_html,
+                    sem,
+                    sut_backend,
+                    sut_options,
+                    history_path,
+                )
+            )
+        summary = list(await asyncio.gather(*tasks))
+        if batch_summary and len(summary) > 1:
+            _write_batch_summary(output_dir, summary, write_md=write_md, write_csv=write_csv)
+        if not quiet:
+            table = Table(title="Retry Summary", box=box.SIMPLE_HEAVY, show_lines=True)
+            table.add_column("Persona", style="cyan")
+            table.add_column("Score", style="white")
+            table.add_column("Result File", style="green")
+            table.add_column("Error", style="red")
+            for item in summary:
+                p = item.get("persona_name", "")
+                err = item.get("error")
+                if err:
+                    table.add_row(p, "-", "-", err)
+                else:
+                    s = item.get("score")
+                    table.add_row(p, str(s) if s is not None else "?", item.get("result_path", ""), "")
+            console.print()
+            console.print(table)
+        fail_under = getattr(args, "fail_under", None)
+        if fail_under is not None:
+            for item in summary:
+                if "error" in item:
+                    _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
+                    return 1
+                s = item.get("score")
+                if s is not None and int(s) < fail_under:
+                    _notify_failure(notify_webhook, f"Safety tester failed: score {s} below --fail-under {fail_under}.", summary)
+                    return 1
+        if fail_under_criteria:
+            for item in summary:
+                if "error" in item:
+                    _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
+                    return 1
+                for cid, min_score in (fail_under_criteria or {}).items():
+                    if (item.get("criterion_scores") or {}).get(cid, 0) < min_score:
+                        _notify_failure(notify_webhook, f"Safety tester failed: criterion {cid} below threshold.", summary)
+                        return 1
+        return 0
 
     if args.config:
         config_path = Path(args.config)
