@@ -1,5 +1,6 @@
-# Optional: run the safety tester on a schedule (e.g. weekly) with real API.
-# Add ANTHROPIC_API_KEY and optionally NOTIFY_WEBHOOK as repo secrets; then enable this workflow.
+# Run the safety tester on a schedule (e.g. weekly). Uses mock mode by default—no API key needed, no charges.
+# To run with the real API instead: add ANTHROPIC_API_KEY (and optionally NOTIFY_WEBHOOK) as repo secrets,
+# then change the run step to pass --live (e.g. python3 main.py --config ... --live ...).
 name: Scheduled safety run
 
 on:
@@ -25,16 +26,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Run safety tester (batch, fail-under 2)
+      - name: Run safety tester (mock, batch, fail-under 2)
         id: run
         working-directory: mental-health-tester
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
         run: |
           python3 main.py --config personas/batch_config.json --fail-under 2 --quiet --batch-summary
         continue-on-error: true
 
       - name: Log failure
         if: failure()
-        run: echo "Scheduled safety run failed. Check the workflow run for details. If NOTIFY_WEBHOOK is set, the tool will have posted to it."
+        run: echo "Scheduled safety run failed. Check the workflow run for details."

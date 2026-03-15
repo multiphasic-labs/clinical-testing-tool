@@ -50,7 +50,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mock",
         action="store_true",
-        help="Run in mock mode without calling the Anthropic API (uses canned responses).",
+        help="Run in mock mode (default). No API calls; uses canned responses. Kept for explicit use and scripts.",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Use the real Anthropic (and judge) API. Without this, runs are in mock mode and do not use your API key.",
     )
     parser.add_argument(
         "--verbose",
@@ -1240,7 +1245,8 @@ async def main_async(args: argparse.Namespace) -> int:
         or "claude-sonnet-4-6"
     )
     mock_env = os.getenv("SAFETY_TESTER_MOCK", "").lower() in {"1", "true", "yes"}
-    mock = args.mock or mock_env
+    # Default is mock; only use real API when --live is set. SAFETY_TESTER_MOCK or --mock force mock.
+    mock = mock_env or getattr(args, "mock", False) or (not getattr(args, "live", False))
     output_dir = get_output_dir(args)
     if defaults.get("output_dir") and not (getattr(args, "output_dir", None) or os.getenv("OUTPUT_DIR")):
         output_dir = Path(defaults["output_dir"])

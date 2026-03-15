@@ -125,20 +125,20 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
    python3 -m pip install -r requirements.txt
    ```
 
-4. **Run a test** (mock mode, no API key needed):
-   ```bash
-   python3 main.py --persona passive_ideation.json --mock
-   ```
-   Or run against the API (uses your key and incurs cost):
+4. **Run a test** (default is mock—no API key needed, no charges):
    ```bash
    python3 main.py --persona passive_ideation.json
+   ```
+   To use the real Anthropic API (uses your key and incurs cost), pass **`--live`**:
+   ```bash
+   python3 main.py --persona passive_ideation.json --live
    ```
 
 5. **Smoke test** (optional): from the repo root, run one command to confirm everything works:
    ```bash
    bash scripts/smoke.sh
    ```
-   Or: `python3 main.py --persona passive_ideation.json --mock --quiet --fail-under 2` (exit 0 and `score=2`).
+   Or: `python3 main.py --persona passive_ideation.json --quiet --fail-under 2` (exit 0 and `score=2`; default is mock).
 
 Results are written to `results/` as JSON (and optionally Markdown). See [Configuration](#configuration) and [Usage](#usage) for more options.
 
@@ -146,10 +146,10 @@ Results are written to `results/` as JSON (and optionally Markdown). See [Config
 
 ## Example output
 
-Running a single persona in mock mode:
+Running a single persona (mock by default):
 
 ```bash
-$ python3 main.py --persona passive_ideation.json --mock --quiet
+$ python3 main.py --persona passive_ideation.json --quiet
 persona=passive_ideation score=2 criterion_scores={'crisis_urgency': 2, 'no_diagnosis': 2} path=/path/to/results/20260315T120000Z_passive_ideation.json
 ```
 
@@ -189,7 +189,7 @@ Build and run with Docker for a consistent environment:
 cd mental-health-tester
 docker build -t mental-health-tester .
 # Mock run (no API key needed)
-docker run -v $(pwd)/results:/app/results mental-health-tester --persona passive_ideation.json --mock
+docker run -v $(pwd)/results:/app/results mental-health-tester --persona passive_ideation.json
 # Real run: pass env or mount .env
 docker run --env-file .env -v $(pwd)/results:/app/results mental-health-tester --persona passive_ideation.json
 ```
@@ -197,7 +197,7 @@ docker run --env-file .env -v $(pwd)/results:/app/results mental-health-tester -
 With docker-compose:
 
 ```bash
-docker-compose run --rm tester --persona passive_ideation.json --mock
+docker-compose run --rm tester --persona passive_ideation.json
 ```
 
 ---
@@ -288,12 +288,13 @@ Use this to test different chatbot configs without changing code.
 - **`--log PATH`** — Append a simple log line per run (timestamp, persona, score, path or error) to the given file for debugging or auditing.
 - **`--batch-summary`** — When running multiple personas, write `batch_summary_TIMESTAMP.json` (and `.md` if `--md`) to the output dir with one row per persona (score, error, result path).
 
-### Mock mode (offline / no-API)
+### Mock mode (default) and real API
 
-Mock mode lets you exercise the pipeline without making real Anthropic API calls:
+**Runs use mock mode by default**—no API calls, no key required, no charges. To use the real Anthropic (and judge) API, pass **`--live`**.
 
-- CLI: add `--mock`
-- Or set `SAFETY_TESTER_MOCK=1` (or `true`, `yes`)
+- **Default**: mock (canned SUT and judge responses).
+- **Real API**: add `--live` to the command.
+- **Force mock** (e.g. in scripts): `--mock` or `SAFETY_TESTER_MOCK=1` (or `true`, `yes`).
 
 In mock mode:
 
