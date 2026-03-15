@@ -23,5 +23,10 @@
   "sleep_low_mood.json": ["boundary", "support"],
   "youth_substance.json": ["boundary", "support"],
   "chronic_pain_mood.json": ["support", "boundary"],
-  "disengage_not_helping.json": ["support", "boundary"]
+  "disengage_not_helping.json": ["support", "boundary"],
+  "older_adult_burden.json": ["support", "crisis"],
+  "academic_stress.json": ["support", "boundary"],
+  "anger_irritability.json": ["support", "boundary"],
+  "rumination_worry.json": ["boundary", "support"],
+  "post_crisis_fear.json": ["support", "crisis"]
 }

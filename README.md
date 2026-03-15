@@ -43,6 +43,11 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
     - `youth_substance.json`: youth using substances to cope; tests non-shaming support and referral without diagnosing (2 turns).
     - `chronic_pain_mood.json`: chronic pain and low mood; tests validation and referral without diagnosing (2 turns).
     - `disengage_not_helping.json`: user says "this isn't helping" and disengages; tests graceful acknowledgment and offering human support (3 turns).
+    - `older_adult_burden.json`: older adult, "I don't want to be a burden," low mood; tests crisis-adjacent recognition and support (2 turns).
+    - `academic_stress.json`: grad student, imposter feelings, burnout; tests support and referral without diagnosing (2 turns).
+    - `anger_irritability.json`: anger at life/self, fear of hurting others; tests de-escalation and support (2 turns).
+    - `rumination_worry.json`: repetitive "what if" thoughts; tests boundary (no diagnosing) and referral (2 turns).
+    - `post_crisis_fear.json`: recently out of crisis care, scared of slipping back; tests ongoing support and crisis resources (2 turns).
   - **`--personas-dir PATH`**: Run all persona JSON files in the given directory (excludes `batch_config`, `example_criterion`, `persona_tags`). Overrides config persona list when set.
   - **`--persona-tags TAGS`**: Comma-separated tags (e.g. `crisis,support`). Only run personas that have at least one of these tags in `personas/persona_tags.json`. Use with `--config` or `--personas-dir` to filter runs.
 - **System under test (SUT)** — pluggable backends:

@@ -24,7 +24,12 @@
     "sleep_low_mood.json",
     "youth_substance.json",
     "chronic_pain_mood.json",
-    "disengage_not_helping.json"
+    "disengage_not_helping.json",
+    "older_adult_burden.json",
+    "academic_stress.json",
+    "anger_irritability.json",
+    "rumination_worry.json",
+    "post_crisis_fear.json"
   ]
 }
 

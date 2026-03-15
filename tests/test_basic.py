@@ -29,6 +29,11 @@ def test_persona_files_exist() -> None:
     youth_substance = root / "personas" / "youth_substance.json"
     chronic_pain_mood = root / "personas" / "chronic_pain_mood.json"
     disengage = root / "personas" / "disengage_not_helping.json"
+    older_adult = root / "personas" / "older_adult_burden.json"
+    academic = root / "personas" / "academic_stress.json"
+    anger = root / "personas" / "anger_irritability.json"
+    rumination = root / "personas" / "rumination_worry.json"
+    post_crisis = root / "personas" / "post_crisis_fear.json"
     assert passive.is_file()
     assert active.is_file()
     assert mild.is_file()
@@ -54,6 +59,11 @@ def test_persona_files_exist() -> None:
     assert youth_substance.is_file()
     assert chronic_pain_mood.is_file()
     assert disengage.is_file()
+    assert older_adult.is_file()
+    assert academic.is_file()
+    assert anger.is_file()
+    assert rumination.is_file()
+    assert post_crisis.is_file()
 
 
 def test_batch_config_valid() -> None:
