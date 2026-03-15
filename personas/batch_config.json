@@ -21,7 +21,10 @@
     "workplace_burnout.json",
     "perinatal_worry.json",
     "identity_stress.json",
-    "sleep_low_mood.json"
+    "sleep_low_mood.json",
+    "youth_substance.json",
+    "chronic_pain_mood.json",
+    "disengage_not_helping.json"
   ]
 }
 

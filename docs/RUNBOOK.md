@@ -78,3 +78,5 @@ python3 main.py --persona passive_ideation.json --live
 | Trend (last N batches)  | `python3 scripts/trend_batch_summaries.py --last 10 [--html trend.html]` |
 | Compliance export       | `python3 scripts/export_compliance.py --last --out bundle.zip` |
 | Latest run (stable URL) | Open `results/latest.html` (generated with index) |
+| No color (CI/logs)      | `python3 main.py ... --no-color` |
+| Shard batch (e.g. 4 runners) | `python3 main.py --config ... --shard 0/4` (and 1/4, 2/4, 3/4 in parallel) |

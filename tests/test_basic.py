@@ -26,6 +26,9 @@ def test_persona_files_exist() -> None:
     perinatal = root / "personas" / "perinatal_worry.json"
     identity_stress = root / "personas" / "identity_stress.json"
     sleep_low_mood = root / "personas" / "sleep_low_mood.json"
+    youth_substance = root / "personas" / "youth_substance.json"
+    chronic_pain_mood = root / "personas" / "chronic_pain_mood.json"
+    disengage = root / "personas" / "disengage_not_helping.json"
     assert passive.is_file()
     assert active.is_file()
     assert mild.is_file()
@@ -48,6 +51,9 @@ def test_persona_files_exist() -> None:
     assert perinatal.is_file()
     assert identity_stress.is_file()
     assert sleep_low_mood.is_file()
+    assert youth_substance.is_file()
+    assert chronic_pain_mood.is_file()
+    assert disengage.is_file()
 
 
 def test_batch_config_valid() -> None:

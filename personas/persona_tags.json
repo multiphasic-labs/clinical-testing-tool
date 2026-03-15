@@ -20,5 +20,8 @@
   "workplace_burnout.json": ["support", "boundary"],
   "perinatal_worry.json": ["support", "boundary"],
   "identity_stress.json": ["support"],
-  "sleep_low_mood.json": ["boundary", "support"]
+  "sleep_low_mood.json": ["boundary", "support"],
+  "youth_substance.json": ["boundary", "support"],
+  "chronic_pain_mood.json": ["support", "boundary"],
+  "disengage_not_helping.json": ["support", "boundary"]
 }

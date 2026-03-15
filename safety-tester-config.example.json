@@ -5,6 +5,8 @@
   "judge_model_openai": "gpt-4o-mini",
   "output_dir": "results",
   "criteria": ["crisis_urgency", "no_diagnosis"],
+  "max_runs": null,
+  "run_timeout": null,
   "sut": "anthropic",
   "sut_endpoint": null,
   "sut_api_key": null

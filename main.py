@@ -341,6 +341,18 @@ def parse_args() -> argparse.Namespace:
         metavar="N",
         help="Cap batch at N persona runs (e.g. --personas-dir personas --max-runs 3 for a quick smoke).",
     )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable colored output (for CI or pipes).",
+    )
+    parser.add_argument(
+        "--shard",
+        type=str,
+        default=None,
+        metavar="N/M",
+        help="Run only persona index i where i %% M == N (e.g. --shard 0/4, --shard 1/4 to split a batch across 4 runners). Personas are sorted before sharding.",
+    )
     return parser.parse_args()
 
 
@@ -363,6 +375,30 @@ def _load_defaults_config(args: argparse.Namespace) -> Dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+def _parse_shard(shard_arg: Optional[str]) -> Optional[Tuple[int, int]]:
+    """Parse --shard N/M into (N, M). Returns None if invalid or not set."""
+    if not shard_arg or not str(shard_arg).strip():
+        return None
+    parts = str(shard_arg).strip().split("/")
+    if len(parts) != 2:
+        return None
+    try:
+        n, m = int(parts[0].strip()), int(parts[1].strip())
+        if m <= 0 or n < 0 or n >= m:
+            return None
+        return (n, m)
+    except ValueError:
+        return None
+
+
+def _apply_shard(items: List[str], shard: Optional[Tuple[int, int]]) -> List[str]:
+    """Filter items to indices i where i % M == N. Personas should already be sorted."""
+    if not shard:
+        return items
+    n, m = shard
+    return [items[i] for i in range(len(items)) if i % m == n]
 
 
 def resolve_persona_path(persona_arg: str) -> Path:
@@ -1522,7 +1558,7 @@ async def main_async(args: argparse.Namespace) -> int:
             or defaults.get("judge_model")
             or "gpt-4o-mini"
         )
-    run_timeout = getattr(args, "run_timeout", None)
+    run_timeout = getattr(args, "run_timeout", None) or defaults.get("run_timeout")
     log_path = None
     if getattr(args, "log", None):
         log_path = Path(args.log)
@@ -1713,7 +1749,13 @@ async def main_async(args: argparse.Namespace) -> int:
         if not personas:
             console.print("[bold red]No personas match --persona-tags.[/bold red]")
             return 1
-        max_runs = getattr(args, "max_runs", None)
+        personas = sorted(personas)
+        shard = _parse_shard(getattr(args, "shard", None))
+        if shard:
+            personas = _apply_shard(personas, shard)
+            if not quiet:
+                console.print(f"[dim]Shard {shard[0]}/{shard[1]}: running {len(personas)} persona(s).[/dim]")
+        max_runs = getattr(args, "max_runs", None) or defaults.get("max_runs")
         if max_runs is not None and max_runs > 0:
             personas = personas[:max_runs]
             if not quiet:
@@ -1896,7 +1938,13 @@ async def main_async(args: argparse.Namespace) -> int:
     if not persona_list:
         console.print("[bold red]No personas match --persona-tags.[/bold red]")
         return 1
-    max_runs = getattr(args, "max_runs", None)
+    persona_list = sorted(persona_list)
+    shard = _parse_shard(getattr(args, "shard", None))
+    if shard:
+        persona_list = _apply_shard(persona_list, shard)
+        if not quiet:
+            console.print(f"[dim]Shard {shard[0]}/{shard[1]}: running {len(persona_list)} persona(s).[/dim]")
+    max_runs = getattr(args, "max_runs", None) or defaults.get("max_runs")
     if max_runs is not None and max_runs > 0:
         persona_list = persona_list[:max_runs]
         if not quiet:
@@ -2218,7 +2266,10 @@ def _get_version() -> str:
 
 
 def main() -> None:
+    global console
     args = parse_args()
+    if getattr(args, "no_color", False):
+        console = Console(no_color=True)
     if getattr(args, "version", False):
         print(_get_version())
         raise SystemExit(0)
