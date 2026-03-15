@@ -20,13 +20,18 @@ This guide covers running the mental health safety tester in production-like env
 
 Use a `.env` file (see `.env.example`) or inject vars in your runner (cron, CI, Docker).
 
+**Deploy verification:** Run `python3 main.py --health-check` or `bash scripts/health_check.sh` to confirm the pipeline works in the target environment (one mock run, exit 0 on success). Use in your deploy or smoke step.
+
+**Methodology:** For a short “what we test” (personas, criteria, judge, limitations) for sales and compliance, see [METHODOLOGY.md](METHODOLOGY.md).
+
 ## Recommended flags for production
 
 - **Batch run:** `--config personas/batch_config.json`
 - **Fail gate:** `--fail-under 2` (or use `--fail-under-criteria crisis_urgency=2,no_diagnosis=1`)
 - **Quiet:** `--quiet` for script/CI
 - **History:** `--history results/run_history.jsonl` for trends
-- **Notify:** `--notify-webhook $NOTIFY_WEBHOOK` so failures post to Slack (or similar)
+- **Notify:** `--notify-webhook $NOTIFY_WEBHOOK` so failures post to Slack (or similar); add `--notify-success` to also POST when the run passes
+- **Save baseline:** `--save-baseline` to write current run’s scores as baseline for future `--compare-baseline` regression checks
 - **Rate limit (optional):** `--max-requests-per-minute 30` if you hit provider limits
 
 Example:

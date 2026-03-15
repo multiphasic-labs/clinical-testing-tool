@@ -238,6 +238,39 @@ def parse_args() -> argparse.Namespace:
         metavar="N",
         help="When using --parallel, cap at N SUT+judge requests per minute (approx). Ignored in mock.",
     )
+    parser.add_argument(
+        "--save-baseline",
+        action="store_true",
+        help="After a successful run, write criterion_scores to baseline_<persona>.json for future --compare-baseline.",
+    )
+    parser.add_argument(
+        "--notify-success",
+        action="store_true",
+        help="When run passes (exit 0), POST a summary to --notify-webhook (or NOTIFY_WEBHOOK).",
+    )
+    parser.add_argument(
+        "--version",
+        action="store_true",
+        help="Print version and exit.",
+    )
+    parser.add_argument(
+        "--health-check",
+        action="store_true",
+        help="Run one mock persona and exit 0 if the pipeline works (for deploy verification).",
+    )
+    parser.add_argument(
+        "--branded-report",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Write a single HTML report to PATH with optional branding (use with --report-branding-title for 'Run by X').",
+    )
+    parser.add_argument(
+        "--report-branding-title",
+        type=str,
+        default=None,
+        help="Title for branded report (e.g. 'Run by Acme Corp'). Used with --branded-report.",
+    )
     return parser.parse_args()
 
 
@@ -340,6 +373,7 @@ def save_result_json(
     final_score = min(criterion_scores.values()) if criterion_scores else 0
 
     payload = {
+        "schema_version": "1",
         "timestamp_utc": timestamp,
         "persona_name": persona_name,
         "conversation": conversation,
@@ -881,7 +915,20 @@ def _notify_failure(webhook_url: Optional[str], message: str, summary: Optional[
         return
     try:
         import urllib.request
-        payload = json.dumps({"text": message, "runs": summary}).encode("utf-8")
+        payload = json.dumps({"text": message, "passed": False, "runs": summary}).encode("utf-8")
+        req = urllib.request.Request(webhook_url, data=payload, method="POST", headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
+
+
+def _notify_success(webhook_url: Optional[str], summary: List[Dict[str, Any]], message: str) -> None:
+    """POST a JSON payload to webhook_url on success. Silently ignore errors."""
+    if not webhook_url or not webhook_url.strip():
+        return
+    try:
+        import urllib.request
+        payload = json.dumps({"text": message, "passed": True, "runs": summary}).encode("utf-8")
         req = urllib.request.Request(webhook_url, data=payload, method="POST", headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=10)
     except Exception:
@@ -921,6 +968,97 @@ def _load_retry_failed(
                     label = (r.get("run_label") or "").strip() or None
                     out.append((persona, label))
     return out
+
+
+def _write_branded_report(
+    path: Path,
+    summary: List[Dict[str, Any]],
+    title: Optional[str] = None,
+) -> None:
+    """Write a single HTML report with optional branding (e.g. 'Run by Acme Corp')."""
+    rows = []
+    for item in summary:
+        p = item.get("persona_name", "")
+        s = item.get("score", "—")
+        err = item.get("error", "")
+        rows.append(f"<tr><td>{p}</td><td>{s}</td><td>{err or '—'}</td></tr>")
+    branding = f"<p><strong>{title}</strong></p>" if title else ""
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Safety Run Report</title>
+<style>body {{ font-family: system-ui,sans-serif; max-width: 800px; margin: 1rem auto; padding: 0 1rem; }} table {{ border-collapse: collapse; width: 100%; }} th, td {{ border: 1px solid #ccc; padding: 0.5rem; }} th {{ background: #f5f5f5; }}</style>
+</head>
+<body>
+<h1>Mental Health Safety Run Report</h1>
+<p>Generated: {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UTC</p>
+{branding}
+<h2>Runs</h2>
+<table>
+<thead><tr><th>Persona</th><th>Score</th><th>Error</th></tr></thead>
+<tbody>{"".join(rows)}</tbody>
+</table>
+</body>
+</html>"""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(html, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _maybe_save_baseline_and_notify_success(
+    args: argparse.Namespace,
+    output_dir: Path,
+    summary: List[Dict[str, Any]],
+    notify_webhook: Optional[str],
+    quiet: bool,
+) -> None:
+    """If --save-baseline or --notify-success set, save baselines and/or POST success to webhook."""
+    if getattr(args, "save_baseline", False):
+        for item in summary:
+            if item.get("error"):
+                continue
+            cs = item.get("criterion_scores") or {}
+            if cs:
+                _save_baseline(
+                    output_dir,
+                    item.get("persona_name", ""),
+                    cs,
+                    item.get("run_label"),
+                )
+    if getattr(args, "notify_success", False) and notify_webhook and summary:
+        n = len(summary)
+        failed = sum(1 for s in summary if s.get("error"))
+        msg = f"Safety run passed: {n} run(s), all scores meet threshold." if failed == 0 else f"Safety run completed: {n} run(s)."
+        _notify_success(notify_webhook, summary, msg)
+    if getattr(args, "branded_report", None) and summary:
+        _write_branded_report(Path(args.branded_report), summary, getattr(args, "report_branding_title", None))
+
+
+def _save_baseline(
+    output_dir: Path,
+    persona_name: str,
+    criterion_scores: Dict[str, int],
+    run_label: Optional[str] = None,
+) -> None:
+    """Write baseline JSON for this persona so --compare-baseline can use it later."""
+    safe = persona_name.replace(" ", "_")
+    if run_label:
+        safe_label = Path(run_label).stem.replace(" ", "_")
+        path = output_dir / f"baseline_{safe}_{safe_label}.json"
+    else:
+        path = output_dir / f"baseline_{safe}.json"
+    payload = {
+        "schema_version": "1",
+        "persona_name": persona_name,
+        "criterion_scores": criterion_scores,
+        "timestamp_utc": datetime.utcnow().strftime("%Y%m%dT%H%M%SZ"),
+    }
+    try:
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+    except OSError:
+        pass
 
 
 def _append_history(history_path: Optional[Path], record: Dict[str, Any]) -> None:
@@ -971,7 +1109,7 @@ def _write_batch_summary(
         })
     path = output_dir / f"batch_summary_{timestamp}.json"
     with path.open("w", encoding="utf-8") as f:
-        json.dump({"timestamp_utc": timestamp, "runs": rows}, f, indent=2, ensure_ascii=False)
+        json.dump({"schema_version": "1", "timestamp_utc": timestamp, "runs": rows}, f, indent=2, ensure_ascii=False)
     if write_md:
         md_path = output_dir / f"batch_summary_{timestamp}.md"
         lines = [f"# Batch summary — {timestamp}", ""]
@@ -1005,6 +1143,7 @@ def _write_batch_summary(
     if audit:
         audit_path = output_dir / f"batch_audit_{timestamp}.json"
         audit_data = {
+            "schema_version": "1",
             "timestamp_utc": timestamp,
             "run_count": len(rows),
             "runs": [
@@ -1189,6 +1328,7 @@ async def main_async(args: argparse.Namespace) -> int:
                     if (item.get("criterion_scores") or {}).get(cid, 0) < min_score:
                         _notify_failure(notify_webhook, f"Safety tester failed: criterion {cid} below threshold.", summary)
                         return 1
+        _maybe_save_baseline_and_notify_success(args, output_dir, summary, notify_webhook, quiet)
         return 0
 
     if args.config:
@@ -1359,6 +1499,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 if baseline_scores and not _check_baseline(pname, item.get("criterion_scores") or {}, baseline_scores, quiet):
                     _notify_failure(notify_webhook, "Safety tester failed: regression vs baseline.", summary)
                     return 1
+        _maybe_save_baseline_and_notify_success(args, output_dir, summary, notify_webhook, quiet)
         return 0
 
     # Single-persona or --personas batch (no config file)
@@ -1499,6 +1640,7 @@ async def main_async(args: argparse.Namespace) -> int:
             if baseline_scores and not _check_baseline(pname, item.get("criterion_scores") or {}, baseline_scores, quiet):
                 _notify_failure(notify_webhook, "Safety tester failed: regression vs baseline.", summary)
                 return 1
+    _maybe_save_baseline_and_notify_success(args, output_dir, summary, notify_webhook, quiet)
     return 0
 
 
@@ -1555,8 +1697,33 @@ def _list_criteria() -> None:
     console.print("  (use --criteria id1,id2 to run a subset)")
 
 
+def _get_version() -> str:
+    """Read version from pyproject.toml in the same directory as this file."""
+    import re
+    project_root = Path(__file__).resolve().parent
+    pyproject = project_root / "pyproject.toml"
+    if pyproject.is_file():
+        text = pyproject.read_text(encoding="utf-8")
+        m = re.search(r'version\s*=\s*["\']([^"\']+)["\']', text)
+        if m:
+            return m.group(1)
+    return "0.0.0"
+
+
 def main() -> None:
     args = parse_args()
+    if getattr(args, "version", False):
+        print(_get_version())
+        raise SystemExit(0)
+    if getattr(args, "health_check", False):
+        # Run one mock persona; exit 0 if pipeline works
+        args.mock = True
+        args.quiet = True
+        args.persona = "passive_ideation.json"
+        args.config = None
+        args.personas = None
+        exit_code = asyncio.run(main_async(args))
+        raise SystemExit(exit_code)
     if getattr(args, "list_personas", False):
         _list_personas()
         raise SystemExit(0)
