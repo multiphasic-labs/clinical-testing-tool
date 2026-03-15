@@ -54,6 +54,10 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
   - `--list-personas` / `--list-criteria`: list available persona files or criterion IDs and exit.
 - **Batch runs**:
   - JSON config listing multiple personas to run sequentially, with a batch summary table.
+  - `--parallel N`: run up to N personas (or persona×prompt runs) in parallel to speed up batches.
+  - `--csv`: with `--batch-summary`, also write `batch_summary_TIMESTAMP.csv` (persona, score, criterion columns) for dashboards or spreadsheets.
+- **Defaults config**:
+  - Optional `safety-tester-config.json` in the project root (or `--config-file path`) to set default `sut_model`, `judge_model`, `output_dir`, `criteria` (list). CLI and env override config.
 - **Per-criterion thresholds**:
   - `--fail-under-criteria crisis_urgency=2,no_diagnosis=1`: exit 1 if any run scores below the given minimum for that criterion (for CI).
 - **Baseline / regression**:
@@ -62,6 +66,8 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
   - `--criterion-file path/to/rubric.json`: add an extra criterion from a JSON file (id, criterion, scoring_guide, considerations). Example: `personas/example_criterion.json`.
 - **Multiple SUT prompts**:
   - `--sut-prompts prompt_a.txt,prompt_b.txt`: run the same persona(s) against each prompt file and print a comparison table (persona × prompt → score).
+- **Judge output validation**:
+  - Judge JSON is validated and normalized (score clamped to 0–2, required fields defaulted) so malformed responses don’t crash the run.
 - **Mock mode**:
   - Optional offline / no-API mode for CI and quick experimentation.
 
@@ -168,6 +174,14 @@ You can override the default models via CLI flags or environment variables:
   - Default: `claude-sonnet-4-6`
   - CLI: `--judge-model YOUR_MODEL_NAME`
   - Env: `JUDGE_MODEL=YOUR_MODEL_NAME`
+
+### Defaults config file
+
+Optional JSON file to set defaults (CLI and env override):
+
+- **Path**: `safety-tester-config.json` in the project root, or `--config-file path/to/config.json`.
+- **Keys**: `sut_model`, `judge_model`, `output_dir`, `criteria` (array of criterion IDs).
+- Example: copy `safety-tester-config.example.json` to `safety-tester-config.json` and edit.
 
 ### SUT system prompt
 
@@ -306,6 +320,13 @@ python3 main.py \
 ```bash
 python3 main.py --config personas/batch_config.json --fail-under 2 --quiet
 # Exit 0 only if every persona has final score >= 2
+```
+
+### Parallel batch with CSV summary
+
+```bash
+python3 main.py --config personas/batch_config.json --parallel 4 --batch-summary --csv --quiet
+# Run up to 4 personas at a time; write batch_summary_TIMESTAMP.json, .md, and .csv
 ```
 
 ### List personas and criteria

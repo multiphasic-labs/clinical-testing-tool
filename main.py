@@ -157,7 +157,46 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Comma-separated paths to SUT system prompt files. Run the same persona against each and compare.",
     )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Run up to N personas (or persona×prompt runs) in parallel. Default: 1 (sequential).",
+    )
+    parser.add_argument(
+        "--csv",
+        action="store_true",
+        help="When using --batch-summary, also write batch_summary_TIMESTAMP.csv.",
+    )
+    parser.add_argument(
+        "--config-file",
+        type=str,
+        default=None,
+        help="Path to JSON config for defaults (sut_model, judge_model, output_dir, criteria, etc.). Default: look for safety-tester-config.json in project root.",
+    )
     return parser.parse_args()
+
+
+def _load_defaults_config(args: argparse.Namespace) -> Dict[str, Any]:
+    """
+    Load optional defaults from safety-tester-config.json (or --config-file path).
+    Returns a dict with keys like sut_model, judge_model, output_dir, criteria (list).
+    CLI and env override these.
+    """
+    project_root = Path(__file__).resolve().parent
+    config_path = getattr(args, "config_file", None)
+    if config_path:
+        path = Path(config_path)
+    else:
+        path = project_root / "safety-tester-config.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
 
 
 def resolve_persona_path(persona_arg: str) -> Path:
@@ -710,6 +749,47 @@ def _check_baseline(
     return True
 
 
+async def _run_one(
+    persona_name: str,
+    args: argparse.Namespace,
+    sut_model: str,
+    judge_model: str,
+    mock: bool,
+    output_dir: Path,
+    quiet: bool,
+    write_md: bool,
+    criterion_ids: Optional[List[str]],
+    log_path: Optional[Path],
+    extra_criterion_specs: Optional[List[Dict[str, Any]]],
+    system_prompt: Optional[str],
+    run_label: Optional[str],
+    report_html: bool,
+    semaphore: Optional[asyncio.Semaphore],
+) -> Dict[str, Any]:
+    """Run a single persona (optionally under a semaphore for parallel batch)."""
+    async def _do() -> Dict[str, Any]:
+        return await run_single_persona(
+            persona_name,
+            verbose=args.verbose,
+            sut_model=sut_model,
+            judge_model=judge_model,
+            mock=mock,
+            output_dir=output_dir,
+            quiet=quiet,
+            write_md=write_md,
+            system_prompt=system_prompt,
+            criterion_ids=criterion_ids,
+            log_path=log_path,
+            extra_criterion_specs=extra_criterion_specs,
+            run_label=run_label,
+            report_html=report_html,
+        )
+    if semaphore:
+        async with semaphore:
+            return await _do()
+    return await _do()
+
+
 def _log_line(log_path: Optional[Path], line: str) -> None:
     """Append a line to the log file if --log was set."""
     if not log_path:
@@ -725,17 +805,24 @@ def _write_batch_summary(
     output_dir: Path,
     summary: List[Dict[str, Any]],
     write_md: bool,
+    write_csv: bool = False,
 ) -> None:
-    """Write batch_summary_TIMESTAMP.json and optionally .md to output_dir."""
+    """Write batch_summary_TIMESTAMP.json and optionally .md and .csv to output_dir."""
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     rows = []
+    criterion_columns: List[str] = []
     for item in summary:
+        cs = item.get("criterion_scores") or {}
+        for cid in cs:
+            if cid not in criterion_columns:
+                criterion_columns.append(cid)
         rows.append({
             "persona": item.get("persona_name", ""),
+            "run_label": item.get("run_label", ""),
             "score": item.get("score"),
             "error": item.get("error"),
             "result_path": item.get("result_path"),
-            "criterion_scores": item.get("criterion_scores"),
+            "criterion_scores": cs,
         })
     path = output_dir / f"batch_summary_{timestamp}.json"
     with path.open("w", encoding="utf-8") as f:
@@ -744,7 +831,7 @@ def _write_batch_summary(
         md_path = output_dir / f"batch_summary_{timestamp}.md"
         lines = [f"# Batch summary — {timestamp}", ""]
         for r in rows:
-            lines.append(f"## {r['persona']}")
+            lines.append(f"## {r['persona']}" + (f" ({r.get('run_label', '')})" if r.get("run_label") else ""))
             lines.append(f"- **Score:** {r['score']}")
             if r.get("error"):
                 lines.append(f"- **Error:** {r['error']}")
@@ -752,18 +839,55 @@ def _write_batch_summary(
                 lines.append(f"- **Result:** {r['result_path']}")
             lines.append("")
         md_path.write_text("\n".join(lines), encoding="utf-8")
+    if write_csv:
+        import csv
+        csv_path = output_dir / f"batch_summary_{timestamp}.csv"
+        headers = ["persona", "run_label", "score", "error", "result_path"] + criterion_columns
+        with csv_path.open("w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=headers, extrasaction="ignore")
+            w.writeheader()
+            for r in rows:
+                row = {
+                    "persona": r["persona"],
+                    "run_label": r.get("run_label", ""),
+                    "score": r.get("score", ""),
+                    "error": r.get("error", "") or "",
+                    "result_path": r.get("result_path", "") or "",
+                }
+                for cid in criterion_columns:
+                    row[cid] = r["criterion_scores"].get(cid, "")
+                w.writerow(row)
 
 
 async def main_async(args: argparse.Namespace) -> int:
-    sut_model = args.sut_model or os.getenv("SUT_MODEL", "claude-haiku-4-5-20251001")
-    judge_model = args.judge_model or os.getenv("JUDGE_MODEL", "claude-sonnet-4-6")
+    defaults = _load_defaults_config(args)
+    sut_model = (
+        args.sut_model
+        or os.getenv("SUT_MODEL")
+        or defaults.get("sut_model")
+        or "claude-haiku-4-5-20251001"
+    )
+    judge_model = (
+        args.judge_model
+        or os.getenv("JUDGE_MODEL")
+        or defaults.get("judge_model")
+        or "claude-sonnet-4-6"
+    )
     mock_env = os.getenv("SAFETY_TESTER_MOCK", "").lower() in {"1", "true", "yes"}
     mock = args.mock or mock_env
     output_dir = get_output_dir(args)
+    if defaults.get("output_dir") and not (getattr(args, "output_dir", None) or os.getenv("OUTPUT_DIR")):
+        output_dir = Path(defaults["output_dir"])
+        output_dir.mkdir(parents=True, exist_ok=True)
     quiet = getattr(args, "quiet", False)
     write_md = getattr(args, "md", False)
+    write_csv = getattr(args, "csv", False)
     criterion_ids = _parse_list_arg(getattr(args, "criteria", None))
+    if criterion_ids is None and defaults.get("criteria"):
+        crit = defaults["criteria"]
+        criterion_ids = crit if isinstance(crit, list) else [c.strip() for c in str(crit).split(",") if c.strip()]
     personas_override = _parse_list_arg(getattr(args, "personas", None))
+    parallel = max(1, int(getattr(args, "parallel", 1)))
     log_path = None
     if getattr(args, "log", None):
         log_path = Path(args.log)
@@ -829,50 +953,57 @@ async def main_async(args: argparse.Namespace) -> int:
                 return 1
 
         summary: list[Dict[str, Any]] = []
+        sem = asyncio.Semaphore(parallel) if parallel > 1 else None
+        tasks = []
         for persona_name in personas:
             if not isinstance(persona_name, str):
-                console.print(f"[bold yellow]Skipping non-string persona entry in config:[/bold yellow] {persona_name}")
                 continue
-
             if prompts_list:
                 for pname, ptext in prompts_list:
-                    result = await run_single_persona(
-                        persona_name,
-                        verbose=args.verbose,
-                        sut_model=sut_model,
-                        judge_model=judge_model,
-                        mock=mock,
-                        output_dir=output_dir,
-                        quiet=quiet,
-                        write_md=write_md,
-                        system_prompt=ptext,
-                        criterion_ids=criterion_ids,
-                        log_path=log_path,
-                        extra_criterion_specs=extra_criterion_specs,
-                        run_label=pname,
-                        report_html=report_html,
+                    tasks.append(
+                        _run_one(
+                            persona_name,
+                            args,
+                            sut_model,
+                            judge_model,
+                            mock,
+                            output_dir,
+                            quiet,
+                            write_md,
+                            criterion_ids,
+                            log_path,
+                            extra_criterion_specs,
+                            ptext,
+                            pname,
+                            report_html,
+                            sem,
+                        )
                     )
-                    summary.append(result)
             else:
-                result = await run_single_persona(
-                    persona_name,
-                    verbose=args.verbose,
-                    sut_model=sut_model,
-                    judge_model=judge_model,
-                    mock=mock,
-                    output_dir=output_dir,
-                    quiet=quiet,
-                    write_md=write_md,
-                    system_prompt=system_prompt,
-                    criterion_ids=criterion_ids,
-                    log_path=log_path,
-                    extra_criterion_specs=extra_criterion_specs,
-                    report_html=report_html,
+                tasks.append(
+                    _run_one(
+                        persona_name,
+                        args,
+                        sut_model,
+                        judge_model,
+                        mock,
+                        output_dir,
+                        quiet,
+                        write_md,
+                        criterion_ids,
+                        log_path,
+                        extra_criterion_specs,
+                        system_prompt,
+                        None,
+                        report_html,
+                        sem,
+                    )
                 )
-                summary.append(result)
+        if tasks:
+            summary = list(await asyncio.gather(*tasks))
 
         if batch_summary and len(summary) > 1:
-            _write_batch_summary(output_dir, summary, write_md=write_md)
+            _write_batch_summary(output_dir, summary, write_md=write_md, write_csv=write_csv)
 
         if not quiet:
             table = Table(
@@ -943,47 +1074,54 @@ async def main_async(args: argparse.Namespace) -> int:
     else:
         persona_list = [args.persona]
 
-    summary = []
+    sem = asyncio.Semaphore(parallel) if parallel > 1 else None
+    tasks = []
     for persona_name in persona_list:
         if prompts_list:
             for pname, ptext in prompts_list:
-                result = await run_single_persona(
-                    persona_name,
-                    verbose=args.verbose,
-                    sut_model=sut_model,
-                    judge_model=judge_model,
-                    mock=mock,
-                    output_dir=output_dir,
-                    quiet=quiet,
-                    write_md=write_md,
-                    system_prompt=ptext,
-                    criterion_ids=criterion_ids,
-                    log_path=log_path,
-                    extra_criterion_specs=extra_criterion_specs,
-                    run_label=pname,
-                    report_html=report_html,
+                tasks.append(
+                    _run_one(
+                        persona_name,
+                        args,
+                        sut_model,
+                        judge_model,
+                        mock,
+                        output_dir,
+                        quiet,
+                        write_md,
+                        criterion_ids,
+                        log_path,
+                        extra_criterion_specs,
+                        ptext,
+                        pname,
+                        report_html,
+                        sem,
+                    )
                 )
-                summary.append(result)
         else:
-            result = await run_single_persona(
-                persona_name,
-                verbose=args.verbose,
-                sut_model=sut_model,
-                judge_model=judge_model,
-                mock=mock,
-                output_dir=output_dir,
-                quiet=quiet,
-                write_md=write_md,
-                system_prompt=system_prompt,
-                criterion_ids=criterion_ids,
-                log_path=log_path,
-                extra_criterion_specs=extra_criterion_specs,
-                report_html=report_html,
+            tasks.append(
+                _run_one(
+                    persona_name,
+                    args,
+                    sut_model,
+                    judge_model,
+                    mock,
+                    output_dir,
+                    quiet,
+                    write_md,
+                    criterion_ids,
+                    log_path,
+                    extra_criterion_specs,
+                    system_prompt,
+                    None,
+                    report_html,
+                    sem,
+                )
             )
-            summary.append(result)
+    summary = list(await asyncio.gather(*tasks)) if tasks else []
 
     if batch_summary and len(summary) > 1:
-        _write_batch_summary(output_dir, summary, write_md=write_md)
+        _write_batch_summary(output_dir, summary, write_md=write_md, write_csv=write_csv)
 
     if not quiet and len(summary) > 1:
         table = Table(

@@ -129,7 +129,39 @@ def _parse_judge_response(text_content: str, criterion_text: str) -> Dict[str, A
         ) from e
     if "score" not in parsed:
         raise RuntimeError(f"Judge JSON missing 'score' field. JSON: {parsed}")
-    return parsed
+    return _validate_parsed_judge(parsed)
+
+
+def _validate_parsed_judge(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Validate and normalize judge output so malformed responses don't break the pipeline.
+    Ensures score in [0,1,2], rationale string, critical_failures and positive_behaviors lists.
+    """
+    out: Dict[str, Any] = {}
+    try:
+        raw_score = parsed.get("score")
+        if raw_score is None:
+            out["score"] = 0
+        elif isinstance(raw_score, (int, float)):
+            s = int(raw_score)
+            out["score"] = max(0, min(2, s))
+        else:
+            out["score"] = 0
+    except (TypeError, ValueError):
+        out["score"] = 0
+
+    raw_rationale = parsed.get("rationale")
+    out["rationale"] = (
+        str(raw_rationale).strip()
+        if raw_rationale is not None and str(raw_rationale).strip()
+        else "Judge output missing or invalid rationale."
+    )
+    cf = parsed.get("critical_failures")
+    out["critical_failures"] = list(cf) if isinstance(cf, list) else []
+    pb = parsed.get("positive_behaviors")
+    out["positive_behaviors"] = list(pb) if isinstance(pb, list) else []
+
+    return out
 
 
 async def _score_one_criterion(
