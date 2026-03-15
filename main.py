@@ -99,6 +99,20 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated persona names to run. With --config: filter to these; without: run these as a batch.",
     )
     parser.add_argument(
+        "--personas-dir",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Run all persona JSON files in this directory (excludes batch_config, example_criterion, persona_tags). Overrides --config persona list when set.",
+    )
+    parser.add_argument(
+        "--persona-tags",
+        type=str,
+        default=None,
+        metavar="TAGS",
+        help="Comma-separated tags (e.g. crisis,support). When set, only run personas that have at least one of these tags in personas/persona_tags.json.",
+    )
+    parser.add_argument(
         "--log",
         type=str,
         default=None,
@@ -303,6 +317,55 @@ def resolve_persona_path(persona_arg: str) -> Path:
     project_root = Path(__file__).resolve().parent
     persona_path = project_root / "personas" / persona_arg
     return persona_path
+
+
+# Names of JSON files that are not persona scripts (excluded from --personas-dir discovery).
+_NON_PERSONA_JSON = {"batch_config.json", "example_criterion.json", "persona_tags.json"}
+
+
+def _discover_personas_from_dir(dir_path: Path) -> List[str]:
+    """List persona JSON filenames in dir_path, excluding config/criterion/tags files."""
+    if not dir_path.is_dir():
+        return []
+    out = []
+    for f in sorted(dir_path.iterdir()):
+        if f.suffix.lower() == ".json" and f.name not in _NON_PERSONA_JSON:
+            out.append(f.name)
+    return out
+
+
+def _load_persona_tags(tags_dir: Path) -> Dict[str, List[str]]:
+    """Load persona_tags.json from tags_dir. Returns dict mapping filename -> list of tags."""
+    path = tags_dir / "persona_tags.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _filter_personas_by_tags(
+    persona_list: List[str],
+    tags_requested: List[str],
+    tags_dir: Path,
+) -> List[str]:
+    """Keep only personas that have at least one of tags_requested in persona_tags.json."""
+    if not tags_requested:
+        return persona_list
+    tag_map = _load_persona_tags(tags_dir)
+    requested = {t.strip().lower() for t in tags_requested if t.strip()}
+    if not requested:
+        return persona_list
+    out = []
+    for p in persona_list:
+        # Match by exact filename or stem
+        key = p if p.endswith(".json") else f"{p}.json"
+        tags = tag_map.get(key) or tag_map.get(p) or []
+        if any((t or "").lower() in requested for t in tags):
+            out.append(p)
+    return out
 
 
 def get_output_dir(args: argparse.Namespace) -> Path:
@@ -1190,6 +1253,9 @@ async def main_async(args: argparse.Namespace) -> int:
         crit = defaults["criteria"]
         criterion_ids = crit if isinstance(crit, list) else [c.strip() for c in str(crit).split(",") if c.strip()]
     personas_override = _parse_list_arg(getattr(args, "personas", None))
+    project_root = Path(__file__).resolve().parent
+    personas_dir: Optional[Path] = Path(args.personas_dir) if getattr(args, "personas_dir", None) else None
+    persona_tags_requested = _parse_list_arg(getattr(args, "persona_tags", None))
     parallel = max(1, int(getattr(args, "parallel", 1)))
     sut_backend = (getattr(args, "sut", None) or defaults.get("sut") or "anthropic").strip().lower()
     sut_options: Dict[str, Any] = {}
@@ -1344,10 +1410,16 @@ async def main_async(args: argparse.Namespace) -> int:
             console.print(f"[bold red]Failed to parse config JSON:[/bold red] {e}")
             return 1
 
-        personas = config.get("personas", [])
-        if not isinstance(personas, list) or not personas:
-            console.print("[bold red]Config must contain a non-empty 'personas' list.[/bold red]")
-            return 1
+        if personas_dir is not None:
+            personas = _discover_personas_from_dir(personas_dir)
+            if not personas:
+                console.print("[bold red]No persona JSON files found in --personas-dir.[/bold red]")
+                return 1
+        else:
+            personas = config.get("personas", [])
+            if not isinstance(personas, list) or not personas:
+                console.print("[bold red]Config must contain a non-empty 'personas' list.[/bold red]")
+                return 1
         if personas_override is not None:
             # Filter to only requested personas (match by filename or stem, e.g. passive_ideation or passive_ideation.json)
             allowed = {p.strip() for p in personas_override}
@@ -1360,6 +1432,11 @@ async def main_async(args: argparse.Namespace) -> int:
             if not personas:
                 console.print("[bold red]No personas left after --personas filter.[/bold red]")
                 return 1
+        tags_dir = personas_dir if personas_dir is not None else project_root / "personas"
+        personas = _filter_personas_by_tags(personas, persona_tags_requested or [], tags_dir)
+        if not personas:
+            console.print("[bold red]No personas match --persona-tags.[/bold red]")
+            return 1
 
         if getattr(args, "dry_run", False):
             _print_dry_run(
@@ -1503,10 +1580,20 @@ async def main_async(args: argparse.Namespace) -> int:
         return 0
 
     # Single-persona or --personas batch (no config file)
-    if personas_override is not None:
+    if personas_dir is not None:
+        persona_list = _discover_personas_from_dir(personas_dir)
+        if not persona_list:
+            console.print("[bold red]No persona JSON files found in --personas-dir.[/bold red]")
+            return 1
+    elif personas_override is not None:
         persona_list = personas_override
     else:
         persona_list = [args.persona]
+    tags_dir = personas_dir if personas_dir is not None else project_root / "personas"
+    persona_list = _filter_personas_by_tags(persona_list, persona_tags_requested or [], tags_dir)
+    if not persona_list:
+        console.print("[bold red]No personas match --persona-tags.[/bold red]")
+        return 1
 
     if getattr(args, "dry_run", False):
         _print_dry_run(
@@ -1645,13 +1732,13 @@ async def main_async(args: argparse.Namespace) -> int:
 
 
 def _list_personas() -> None:
-    """Print persona JSON files in personas/ (exclude batch_config and example criterion)."""
+    """Print persona JSON files in personas/ (exclude batch_config, example_criterion, persona_tags)."""
     project_root = Path(__file__).resolve().parent
     personas_dir = project_root / "personas"
     if not personas_dir.is_dir():
         console.print("No personas/ directory found.")
         return
-    exclude = {"batch_config.json", "example_criterion.json"}
+    exclude = _NON_PERSONA_JSON
     files = sorted(p for p in personas_dir.glob("*.json") if p.name not in exclude)
     console.print("Available personas:")
     for p in files:

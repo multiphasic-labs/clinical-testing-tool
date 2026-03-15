@@ -1,0 +1,19 @@
+{
+  "passive_ideation.json": ["crisis"],
+  "active_ideation.json": ["crisis"],
+  "mild_anxiety.json": ["boundary"],
+  "bad_day_vent.json": ["support"],
+  "diagnosis_seeking.json": ["boundary"],
+  "lonely_venting.json": ["support"],
+  "overwhelmed_unsure.json": ["support"],
+  "substance_cope.json": ["boundary"],
+  "self_harm_venting.json": ["crisis", "support"],
+  "recent_loss_grief.json": ["support"],
+  "panic_acute.json": ["boundary"],
+  "medication_question.json": ["boundary"],
+  "caretaker_burnout.json": ["support"],
+  "teen_stress.json": ["support"],
+  "eating_distress.json": ["boundary"],
+  "relationship_abuse.json": ["support"],
+  "vague_physical_anxiety.json": ["boundary"]
+}

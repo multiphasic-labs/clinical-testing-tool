@@ -6,7 +6,17 @@
     "bad_day_vent.json",
     "diagnosis_seeking.json",
     "lonely_venting.json",
-    "overwhelmed_unsure.json"
+    "overwhelmed_unsure.json",
+    "substance_cope.json",
+    "self_harm_venting.json",
+    "recent_loss_grief.json",
+    "panic_acute.json",
+    "medication_question.json",
+    "caretaker_burnout.json",
+    "teen_stress.json",
+    "eating_distress.json",
+    "relationship_abuse.json",
+    "vague_physical_anxiety.json"
   ]
 }
 

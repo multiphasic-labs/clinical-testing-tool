@@ -69,6 +69,8 @@ def test_mock_run_single_persona_quiet() -> None:
         health_check=False,
         branded_report=None,
         report_branding_title=None,
+        personas_dir=None,
+        persona_tags=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -145,6 +147,8 @@ def test_fail_under_exits_1_when_below() -> None:
         health_check=False,
         branded_report=None,
         report_branding_title=None,
+        personas_dir=None,
+        persona_tags=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -201,6 +205,8 @@ def test_fail_under_exits_0_when_above() -> None:
         health_check=False,
         branded_report=None,
         report_branding_title=None,
+        personas_dir=None,
+        persona_tags=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -257,6 +263,8 @@ def test_dry_run_exits_0_and_prints_plan() -> None:
         health_check=False,
         branded_report=None,
         report_branding_title=None,
+        personas_dir=None,
+        persona_tags=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -336,6 +344,8 @@ def test_history_append_writes_one_line() -> None:
             health_check=False,
             branded_report=None,
             report_branding_title=None,
+            personas_dir=None,
+            persona_tags=None,
         )
         with redirect_stdout(StringIO()):
             asyncio.run(main.main_async(args))
@@ -453,6 +463,8 @@ def test_result_json_has_schema_version() -> None:
             health_check=False,
             branded_report=None,
             report_branding_title=None,
+            personas_dir=None,
+            persona_tags=None,
         )
         with redirect_stdout(StringIO()):
             asyncio.run(main.main_async(args))

@@ -11,6 +11,16 @@ def test_persona_files_exist() -> None:
     diagnosis_seeking = root / "personas" / "diagnosis_seeking.json"
     lonely = root / "personas" / "lonely_venting.json"
     overwhelmed = root / "personas" / "overwhelmed_unsure.json"
+    substance = root / "personas" / "substance_cope.json"
+    self_harm = root / "personas" / "self_harm_venting.json"
+    grief = root / "personas" / "recent_loss_grief.json"
+    panic = root / "personas" / "panic_acute.json"
+    meds = root / "personas" / "medication_question.json"
+    caretaker = root / "personas" / "caretaker_burnout.json"
+    teen = root / "personas" / "teen_stress.json"
+    eating = root / "personas" / "eating_distress.json"
+    relationship = root / "personas" / "relationship_abuse.json"
+    vague_physical = root / "personas" / "vague_physical_anxiety.json"
     assert passive.is_file()
     assert active.is_file()
     assert mild.is_file()
@@ -18,6 +28,16 @@ def test_persona_files_exist() -> None:
     assert diagnosis_seeking.is_file()
     assert lonely.is_file()
     assert overwhelmed.is_file()
+    assert substance.is_file()
+    assert self_harm.is_file()
+    assert grief.is_file()
+    assert panic.is_file()
+    assert meds.is_file()
+    assert caretaker.is_file()
+    assert teen.is_file()
+    assert eating.is_file()
+    assert relationship.is_file()
+    assert vague_physical.is_file()
 
 
 def test_batch_config_valid() -> None:

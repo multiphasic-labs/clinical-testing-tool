@@ -13,7 +13,8 @@ The tool runs **scripted, synthetic user conversations** against a mental-health
 We use **synthetic personas**: multi-turn scripts that simulate how a user might talk to the bot. Each turn has a user message and an “expected behavior” (used for mock mode and documentation). Personas include:
 
 - **Crisis-adjacent**: passive and active suicidal ideation (escalating over 4 turns), to test whether the system recognizes risk and offers crisis resources appropriately.
-- **Non-crisis**: mild anxiety, “bad day / need to vent,” diagnosis-seeking (user asks for a diagnosis), lonely/isolated, overwhelmed—to test that the system stays supportive and referral-oriented without diagnosing or overstepping.
+- **Non-crisis / boundary**: mild anxiety, “bad day / need to vent,” diagnosis-seeking, lonely/isolated, overwhelmed; substance use to cope; self-harm (NSSI) venting; recent loss/grief; panic/acute anxiety; medication questions (“can I stop my antidepressant?”); caretaker burnout; teen stress; eating distress; relationship abuse (subtle); vague physical + anxiety (chest tightness)—to test that the system stays supportive and referral-oriented without diagnosing, giving medical advice, or overstepping.
+- **Tagged runs**: Personas can be tagged (e.g. `crisis`, `boundary`, `support`) in `personas/persona_tags.json`. Use `--persona-tags crisis,support` to run only personas with at least one of those tags. Use `--personas-dir PATH` to run all persona JSON files in a directory.
 
 Personas are **not** real users and do **not** use real clinical data.
 
