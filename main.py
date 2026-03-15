@@ -14,6 +14,7 @@ from rich.text import Text
 
 from runner import ConversationError, load_persona, run_conversation
 from judge import CRITERIA, get_criteria_specs, score_all_criteria
+from sut_backends import get_backend
 
 
 console = Console()
@@ -174,6 +175,25 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Path to JSON config for defaults (sut_model, judge_model, output_dir, criteria, etc.). Default: look for safety-tester-config.json in project root.",
+    )
+    parser.add_argument(
+        "--sut",
+        type=str,
+        default="anthropic",
+        choices=["anthropic", "openai", "custom"],
+        help="SUT backend: anthropic (Claude), openai (OpenAI/Azure), or custom (your HTTP API). Default: anthropic.",
+    )
+    parser.add_argument(
+        "--sut-endpoint",
+        type=str,
+        default=None,
+        help="For --sut custom: URL of the chat API (e.g. https://api.example.com/chat). Or set SUT_ENDPOINT.",
+    )
+    parser.add_argument(
+        "--sut-api-key",
+        type=str,
+        default=None,
+        help="For --sut custom (or openai): API key. Prefer env SUT_API_KEY or OPENAI_API_KEY for security.",
     )
     return parser.parse_args()
 
@@ -544,6 +564,8 @@ async def run_single_persona(
     extra_criterion_specs: Optional[List[Dict[str, Any]]] = None,
     run_label: Optional[str] = None,
     report_html: bool = False,
+    sut_backend: str = "anthropic",
+    sut_options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     persona_path = resolve_persona_path(persona_name)
 
@@ -552,7 +574,11 @@ async def run_single_persona(
     else:
         try:
             conversation = await run_conversation(
-                persona_path, model=sut_model, system_prompt=system_prompt
+                persona_path,
+                model=sut_model,
+                system_prompt=system_prompt,
+                sut_backend=sut_backend,
+                sut_options=sut_options,
             )
         except ConversationError as e:
             console.print(f"[bold red]Conversation error for persona '{persona_name}':[/bold red] {e}")
@@ -765,6 +791,8 @@ async def _run_one(
     run_label: Optional[str],
     report_html: bool,
     semaphore: Optional[asyncio.Semaphore],
+    sut_backend: str = "anthropic",
+    sut_options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run a single persona (optionally under a semaphore for parallel batch)."""
     async def _do() -> Dict[str, Any]:
@@ -783,6 +811,8 @@ async def _run_one(
             extra_criterion_specs=extra_criterion_specs,
             run_label=run_label,
             report_html=report_html,
+            sut_backend=sut_backend,
+            sut_options=sut_options,
         )
     if semaphore:
         async with semaphore:
@@ -888,6 +918,13 @@ async def main_async(args: argparse.Namespace) -> int:
         criterion_ids = crit if isinstance(crit, list) else [c.strip() for c in str(crit).split(",") if c.strip()]
     personas_override = _parse_list_arg(getattr(args, "personas", None))
     parallel = max(1, int(getattr(args, "parallel", 1)))
+    sut_backend = (getattr(args, "sut", None) or defaults.get("sut") or "anthropic").strip().lower()
+    sut_options: Dict[str, Any] = {}
+    if sut_backend == "custom":
+        sut_options["endpoint"] = getattr(args, "sut_endpoint", None) or os.getenv("SUT_ENDPOINT") or defaults.get("sut_endpoint")
+        sut_options["api_key"] = getattr(args, "sut_api_key", None) or os.getenv("SUT_API_KEY") or defaults.get("sut_api_key")
+    elif sut_backend == "openai":
+        sut_options["api_key"] = getattr(args, "sut_api_key", None) or os.getenv("OPENAI_API_KEY") or defaults.get("sut_api_key")
     log_path = None
     if getattr(args, "log", None):
         log_path = Path(args.log)
@@ -921,6 +958,15 @@ async def main_async(args: argparse.Namespace) -> int:
         except ValueError as e:
             console.print(f"[bold red]{e}[/bold red]")
             return 1
+
+    if sut_backend == "custom" and not sut_options.get("endpoint"):
+        console.print("[bold red]--sut custom requires an endpoint. Set --sut-endpoint URL or SUT_ENDPOINT.[/bold red]")
+        return 1
+    try:
+        get_backend(sut_backend)
+    except ValueError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        return 1
 
     if args.config:
         config_path = Path(args.config)
@@ -977,6 +1023,8 @@ async def main_async(args: argparse.Namespace) -> int:
                             pname,
                             report_html,
                             sem,
+                            sut_backend,
+                            sut_options,
                         )
                     )
             else:
@@ -997,6 +1045,8 @@ async def main_async(args: argparse.Namespace) -> int:
                         None,
                         report_html,
                         sem,
+                        sut_backend,
+                        sut_options,
                     )
                 )
         if tasks:
@@ -1096,6 +1146,8 @@ async def main_async(args: argparse.Namespace) -> int:
                         pname,
                         report_html,
                         sem,
+                        sut_backend,
+                        sut_options,
                     )
                 )
         else:
@@ -1116,6 +1168,8 @@ async def main_async(args: argparse.Namespace) -> int:
                     None,
                     report_html,
                     sem,
+                    sut_backend,
+                    sut_options,
                 )
             )
     summary = list(await asyncio.gather(*tasks)) if tasks else []

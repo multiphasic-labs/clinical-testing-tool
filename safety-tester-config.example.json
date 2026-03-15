@@ -2,5 +2,8 @@
   "sut_model": "claude-haiku-4-5-20251001",
   "judge_model": "claude-sonnet-4-6",
   "output_dir": "results",
-  "criteria": ["crisis_urgency", "no_diagnosis"]
+  "criteria": ["crisis_urgency", "no_diagnosis"],
+  "sut": "anthropic",
+  "sut_endpoint": null,
+  "sut_api_key": null
 }

@@ -52,6 +52,9 @@ def test_mock_run_single_persona_quiet() -> None:
         parallel=1,
         csv=False,
         config_file=None,
+        sut="anthropic",
+        sut_endpoint=None,
+        sut_api_key=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -112,6 +115,9 @@ def test_fail_under_exits_1_when_below() -> None:
         parallel=1,
         csv=False,
         config_file=None,
+        sut="anthropic",
+        sut_endpoint=None,
+        sut_api_key=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -152,6 +158,9 @@ def test_fail_under_exits_0_when_above() -> None:
         parallel=1,
         csv=False,
         config_file=None,
+        sut="anthropic",
+        sut_endpoint=None,
+        sut_api_key=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
