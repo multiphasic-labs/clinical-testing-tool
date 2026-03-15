@@ -71,3 +71,35 @@ def test_load_persona_turn_numbers_gaps(tmp_path: Path) -> None:
     )
     with pytest.raises(ConversationError, match="must be 1..N"):
         load_persona(path)
+
+
+def test_load_persona_object_with_turns(tmp_path: Path) -> None:
+    """Persona can be object with 'turns' array (and optional 'meta')."""
+    path = tmp_path / "with_meta.json"
+    path.write_text(
+        json.dumps({
+            "meta": {"author": "test", "severity": "crisis"},
+            "turns": [
+                {"turn": 1, "message": "Hi", "expected_behavior": "Support."},
+                {"turn": 2, "message": "Bye", "expected_behavior": "Close."},
+            ],
+        }),
+        encoding="utf-8",
+    )
+    from runner import load_persona, load_persona_metadata
+    turns = load_persona(path)
+    assert len(turns) == 2
+    assert turns[0]["message"] == "Hi"
+    meta = load_persona_metadata(path)
+    assert meta == {"author": "test", "severity": "crisis"}
+
+
+def test_load_persona_metadata_empty_for_array_format(tmp_path: Path) -> None:
+    """When persona is a plain array, metadata is empty."""
+    path = tmp_path / "array_only.json"
+    path.write_text(
+        json.dumps([{"turn": 1, "message": "A", "expected_behavior": "B"}]),
+        encoding="utf-8",
+    )
+    from runner import load_persona_metadata
+    assert load_persona_metadata(path) == {}

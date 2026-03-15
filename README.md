@@ -105,10 +105,14 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
   - **No color**: `--no-color` disables colored output (for CI or log pipelines).
   - **Sharding**: `--shard N/M` runs only persona index `i` where `i % M == N` (personas sorted first); use to split a batch across multiple runners (e.g. `--shard 0/4`, `--shard 1/4`).
   - **Config overrides**: `safety-tester-config.json` can set `max_runs` and `run_timeout`; CLI and env override.
+  - **JUnit XML**: `--junit PATH` writes a JUnit-style XML report (one testcase per run) for CI integration.
+  - **Progress bar**: Batch runs show a Rich progress bar when not `--quiet` and more than one run.
+  - **Persona metadata**: Optional `meta` object in persona JSON (e.g. `author`, `severity`); see [docs/PERSONA_SCHEMA.md](docs/PERSONA_SCHEMA.md). Surfaces in batch summary and compliance export.
 - **Health check**: `--health-check` (or `bash scripts/health_check.sh`) runs one mock persona and exits 0 if the pipeline works (for deploy verification).
 - **Schema version**: Result and batch/audit JSON files include `"schema_version": "1"` for compatibility.
 - **Branded report**: `--branded-report PATH` writes a single HTML report; use `--report-branding-title "Run by Acme"` for stakeholder hand-off.
 - **Methodology**: See [docs/METHODOLOGY.md](docs/METHODOLOGY.md) for “What we test” (personas, criteria, judge, limitations) for sales and compliance.
+- **Persona schema**: See [docs/PERSONA_SCHEMA.md](docs/PERSONA_SCHEMA.md) for required/optional fields and the optional `meta` object.
 - **Mock mode**:
   - Optional offline / no-API mode for CI and quick experimentation.
 

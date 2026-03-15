@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from sut_backends import ConversationError, get_backend
 
 # Re-export for callers that import from runner
-__all__ = ["ConversationError", "load_persona", "run_conversation"]
+__all__ = ["ConversationError", "load_persona", "load_persona_metadata", "run_conversation"]
 
 
 def _validate_persona_turns(data: List[Dict[str, Any]], persona_path: Path) -> None:
@@ -39,21 +39,41 @@ def _validate_persona_turns(data: List[Dict[str, Any]], persona_path: Path) -> N
         )
 
 
-def load_persona(persona_path: Path) -> List[Dict[str, Any]]:
+def _read_persona_json(persona_path: Path) -> Any:
+    """Load and return raw JSON from persona file."""
     if not persona_path.exists():
         raise ConversationError(f"Persona file not found: {persona_path}")
-
     try:
         with persona_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
+            return json.load(f)
     except json.JSONDecodeError as e:
         raise ConversationError(f"Failed to parse persona JSON: {e}") from e
 
-    if not isinstance(data, list):
-        raise ConversationError("Persona JSON must be a list of turns.")
 
-    _validate_persona_turns(data, persona_path)
-    return data
+def load_persona_metadata(persona_path: Path) -> Dict[str, Any]:
+    """Return optional metadata from persona JSON. If root is object with 'meta', return it; else return {}."""
+    data = _read_persona_json(persona_path)
+    if isinstance(data, dict) and "meta" in data:
+        meta = data["meta"]
+        return meta if isinstance(meta, dict) else {}
+    return {}
+
+
+def load_persona(persona_path: Path) -> List[Dict[str, Any]]:
+    """Load persona turns. Supports root as list of turns or object with 'turns' (and optional 'meta')."""
+    data = _read_persona_json(persona_path)
+    if isinstance(data, dict) and "turns" in data:
+        turns = data["turns"]
+    elif isinstance(data, list):
+        turns = data
+    else:
+        raise ConversationError(
+            "Persona JSON must be a list of turns or an object with a 'turns' array (and optional 'meta')."
+        )
+    if not isinstance(turns, list):
+        raise ConversationError("Persona 'turns' must be a list.")
+    _validate_persona_turns(turns, persona_path)
+    return turns
 
 
 async def run_conversation(

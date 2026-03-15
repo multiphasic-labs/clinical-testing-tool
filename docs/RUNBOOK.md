@@ -80,3 +80,4 @@ python3 main.py --persona passive_ideation.json --live
 | Latest run (stable URL) | Open `results/latest.html` (generated with index) |
 | No color (CI/logs)      | `python3 main.py ... --no-color` |
 | Shard batch (e.g. 4 runners) | `python3 main.py --config ... --shard 0/4` (and 1/4, 2/4, 3/4 in parallel) |
+| JUnit XML for CI           | `python3 main.py --config ... --batch-summary --junit report.xml` |

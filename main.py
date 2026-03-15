@@ -10,10 +10,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import Progress
 from rich.table import Table
 from rich.text import Text
 
-from runner import ConversationError, load_persona, run_conversation
+from runner import ConversationError, load_persona, load_persona_metadata, run_conversation
 from judge import CRITERIA, get_criteria_specs, score_all_criteria
 from sut_backends import get_backend
 
@@ -352,6 +353,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         metavar="N/M",
         help="Run only persona index i where i %% M == N (e.g. --shard 0/4, --shard 1/4 to split a batch across 4 runners). Personas are sorted before sharding.",
+    )
+    parser.add_argument(
+        "--junit",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Write JUnit-style XML report to PATH (for CI). Used with batch runs; one testcase per persona.",
     )
     return parser.parse_args()
 
@@ -921,6 +929,12 @@ async def run_single_persona(
     }
     if run_label is not None:
         out["run_label"] = run_label
+    try:
+        meta = load_persona_metadata(persona_path)
+        if meta:
+            out["persona_meta"] = meta
+    except Exception:
+        pass
     if history_path:
         record = {"timestamp_utc": timestamp, "persona_name": persona_display, "score": final_score, "criterion_scores": criterion_scores, "result_path": str(result_path)}
         if run_label:
@@ -1403,14 +1417,17 @@ def _write_batch_summary(
         for cid in cs:
             if cid not in criterion_columns:
                 criterion_columns.append(cid)
-        rows.append({
+        row = {
             "persona": item.get("persona_name", ""),
             "run_label": item.get("run_label", ""),
             "score": item.get("score"),
             "error": item.get("error"),
             "result_path": item.get("result_path"),
             "criterion_scores": cs,
-        })
+        }
+        if item.get("persona_meta"):
+            row["persona_meta"] = item["persona_meta"]
+        rows.append(row)
     payload: Dict[str, Any] = {"schema_version": "1", "timestamp_utc": timestamp, "runs": rows}
     if run_id:
         payload["run_id"] = run_id
@@ -1496,8 +1513,60 @@ def _write_batch_summary(
             json.dump(audit_data, f, indent=2, ensure_ascii=False)
 
 
+def _write_junit(
+    path: Path,
+    summary: List[Dict[str, Any]],
+    fail_under: Optional[int],
+) -> None:
+    """Write a JUnit-style XML report (one testcase per run) for CI."""
+    import xml.sax.saxutils as sax
+    def esc(s: str) -> str:
+        return sax.escape(str(s) if s is not None else "", entities={"'": "&apos;", '"': "&quot;"})
+    failures = 0
+    cases = []
+    for item in summary:
+        name = item.get("persona_name", "unknown")
+        if item.get("run_label"):
+            name = f"{name}({item.get('run_label')})"
+        err = item.get("error")
+        score = item.get("score")
+        failed = bool(err) or (fail_under is not None and score is not None and int(score) < fail_under)
+        if failed:
+            failures += 1
+        msg = err if err else (f"score {score} below {fail_under}" if failed and score is not None else "")
+        if failed:
+            cases.append(f'    <testcase name="{esc(name)}"><failure message="{esc(msg)}"/></testcase>')
+        else:
+            cases.append(f'    <testcase name="{esc(name)}"/>')
+    xml_content = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<testsuite name="mental-health-safety" tests="{len(summary)}" failures="{failures}">\n'
+        + "\n".join(cases) + "\n"
+        "</testsuite>\n"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(xml_content, encoding="utf-8")
+
+
+async def _gather_with_progress(
+    tasks: List[Any],
+    quiet: bool,
+) -> List[Dict[str, Any]]:
+    """Run coroutines and optionally show a progress bar when not quiet and len(tasks) > 1."""
+    if quiet or len(tasks) <= 1:
+        return list(await asyncio.gather(*tasks))
+
+    with Progress() as progress:
+        task_id = progress.add_task("Runs", total=len(tasks))
+        async def wrap(i: int, c: Any) -> Tuple[int, Dict[str, Any]]:
+            result = await c
+            progress.advance(task_id)
+            return (i, result)
+        results = await asyncio.gather(*[wrap(i, t) for i, t in enumerate(tasks)])
+        return [r for _, r in sorted(results, key=lambda x: x[0])]
+
+
 def _generate_run_id() -> str:
-    """Return a short unique run ID (timestamp + random suffix) for reproducibility."""
     import random
     import string
     ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
@@ -1660,7 +1729,7 @@ async def main_async(args: argparse.Namespace) -> int:
                     judge_backend=judge_backend,
                 )
             )
-        summary = list(await asyncio.gather(*tasks))
+        summary = await _gather_with_progress(tasks, quiet)
         if batch_summary and len(summary) > 1:
             _write_batch_summary(
                 output_dir,
@@ -1671,6 +1740,8 @@ async def main_async(args: argparse.Namespace) -> int:
                 fail_under=getattr(args, "fail_under", None),
                 run_id=run_id,
             )
+        if getattr(args, "junit", None):
+            _write_junit(Path(args.junit), summary, getattr(args, "fail_under", None))
         if not quiet:
             table = Table(title="Retry Summary", box=box.SIMPLE_HEAVY, show_lines=True)
             table.add_column("Persona", style="cyan")
@@ -1750,7 +1821,11 @@ async def main_async(args: argparse.Namespace) -> int:
             console.print("[bold red]No personas match --persona-tags.[/bold red]")
             return 1
         personas = sorted(personas)
-        shard = _parse_shard(getattr(args, "shard", None))
+        shard_arg = getattr(args, "shard", None)
+        shard = _parse_shard(shard_arg)
+        if shard_arg and not shard:
+            console.print("[bold red]Invalid --shard; use N/M with 0 <= N < M (e.g. 0/4).[/bold red]")
+            return 1
         if shard:
             personas = _apply_shard(personas, shard)
             if not quiet:
@@ -1839,7 +1914,9 @@ async def main_async(args: argparse.Namespace) -> int:
                     )
                 )
         if tasks:
-            summary = list(await asyncio.gather(*tasks))
+            summary = await _gather_with_progress(tasks, quiet)
+        else:
+            summary = []
 
         if batch_summary and len(summary) > 1:
             _write_batch_summary(
@@ -1851,6 +1928,8 @@ async def main_async(args: argparse.Namespace) -> int:
                 fail_under=getattr(args, "fail_under", None),
                 run_id=run_id,
             )
+        if getattr(args, "junit", None):
+            _write_junit(Path(args.junit), summary, getattr(args, "fail_under", None))
 
         if not quiet:
             table = Table(
@@ -1939,7 +2018,11 @@ async def main_async(args: argparse.Namespace) -> int:
         console.print("[bold red]No personas match --persona-tags.[/bold red]")
         return 1
     persona_list = sorted(persona_list)
-    shard = _parse_shard(getattr(args, "shard", None))
+    shard_arg = getattr(args, "shard", None)
+    shard = _parse_shard(shard_arg)
+    if shard_arg and not shard:
+        console.print("[bold red]Invalid --shard; use N/M with 0 <= N < M (e.g. 0/4).[/bold red]")
+        return 1
     if shard:
         persona_list = _apply_shard(persona_list, shard)
         if not quiet:
@@ -2024,7 +2107,7 @@ async def main_async(args: argparse.Namespace) -> int:
                     judge_backend=judge_backend,
                 )
             )
-    summary = list(await asyncio.gather(*tasks)) if tasks else []
+    summary = await _gather_with_progress(tasks, quiet) if tasks else []
 
     if batch_summary and len(summary) > 1:
         _write_batch_summary(
@@ -2036,6 +2119,8 @@ async def main_async(args: argparse.Namespace) -> int:
             fail_under=getattr(args, "fail_under", None),
             run_id=run_id,
         )
+    if getattr(args, "junit", None) and summary:
+        _write_junit(Path(args.junit), summary, getattr(args, "fail_under", None))
 
     if not quiet and len(summary) > 1:
         table = Table(
