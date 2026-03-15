@@ -195,6 +195,30 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="For --sut custom (or openai): API key. Prefer env SUT_API_KEY or OPENAI_API_KEY for security.",
     )
+    parser.add_argument(
+        "--sut-response-path",
+        type=str,
+        default=None,
+        help="For --sut custom: dot path to assistant text in response JSON (e.g. data.reply or choices.0.message.content).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would run (personas, prompts, criteria, SUT) and exit without calling any API.",
+    )
+    parser.add_argument(
+        "--history",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Append each run to a JSONL history file (one JSON object per line). Use with scripts/show_history.py for trends.",
+    )
+    parser.add_argument(
+        "--notify-webhook",
+        type=str,
+        default=None,
+        help="On exit code 1, POST a JSON payload to this URL (e.g. Slack incoming webhook). Env: NOTIFY_WEBHOOK.",
+    )
     return parser.parse_args()
 
 
@@ -566,6 +590,7 @@ async def run_single_persona(
     report_html: bool = False,
     sut_backend: str = "anthropic",
     sut_options: Optional[Dict[str, Any]] = None,
+    history_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     persona_path = resolve_persona_path(persona_name)
 
@@ -583,6 +608,8 @@ async def run_single_persona(
         except ConversationError as e:
             console.print(f"[bold red]Conversation error for persona '{persona_name}':[/bold red] {e}")
             _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{persona_name}\terror=ConversationError\t{e}")
+            if history_path:
+                _append_history(history_path, {"timestamp_utc": datetime.utcnow().strftime("%Y%m%dT%H%M%SZ"), "persona_name": persona_name, "error": str(e)})
             return {"persona_name": persona_name, "error": str(e)}
 
     if not quiet:
@@ -603,6 +630,8 @@ async def run_single_persona(
             console.print(f"[bold red]Judge error for persona '{persona_name}':[/bold red] {e}")
             pname = conversation.get("persona_name", persona_name)
             _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{pname}\terror=JudgeError\t{e}")
+            if history_path:
+                _append_history(history_path, {"timestamp_utc": datetime.utcnow().strftime("%Y%m%dT%H%M%SZ"), "persona_name": pname, "error": str(e)})
             return {"persona_name": pname, "error": str(e)}
 
     if verbose:
@@ -673,6 +702,11 @@ async def run_single_persona(
     }
     if run_label is not None:
         out["run_label"] = run_label
+    if history_path:
+        record = {"timestamp_utc": timestamp, "persona_name": persona_display, "score": final_score, "criterion_scores": criterion_scores, "result_path": str(result_path)}
+        if run_label:
+            record["run_label"] = run_label
+        _append_history(history_path, record)
     return out
 
 
@@ -793,6 +827,7 @@ async def _run_one(
     semaphore: Optional[asyncio.Semaphore],
     sut_backend: str = "anthropic",
     sut_options: Optional[Dict[str, Any]] = None,
+    history_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run a single persona (optionally under a semaphore for parallel batch)."""
     async def _do() -> Dict[str, Any]:
@@ -813,11 +848,36 @@ async def _run_one(
             report_html=report_html,
             sut_backend=sut_backend,
             sut_options=sut_options,
+            history_path=history_path,
         )
     if semaphore:
         async with semaphore:
             return await _do()
     return await _do()
+
+
+def _notify_failure(webhook_url: Optional[str], message: str, summary: Optional[List[Dict[str, Any]]] = None) -> None:
+    """POST a JSON payload to webhook_url (e.g. Slack) on failure. Silently ignore errors."""
+    if not webhook_url or not webhook_url.strip():
+        return
+    try:
+        import urllib.request
+        payload = json.dumps({"text": message, "runs": summary}).encode("utf-8")
+        req = urllib.request.Request(webhook_url, data=payload, method="POST", headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
+
+
+def _append_history(history_path: Optional[Path], record: Dict[str, Any]) -> None:
+    """Append one JSON object (as a single line) to the history file."""
+    if not history_path:
+        return
+    try:
+        with history_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
 
 
 def _log_line(log_path: Optional[Path], line: str) -> None:
@@ -923,12 +983,19 @@ async def main_async(args: argparse.Namespace) -> int:
     if sut_backend == "custom":
         sut_options["endpoint"] = getattr(args, "sut_endpoint", None) or os.getenv("SUT_ENDPOINT") or defaults.get("sut_endpoint")
         sut_options["api_key"] = getattr(args, "sut_api_key", None) or os.getenv("SUT_API_KEY") or defaults.get("sut_api_key")
+        rp = getattr(args, "sut_response_path", None) or os.getenv("SUT_RESPONSE_PATH") or defaults.get("sut_response_path")
+        if rp:
+            sut_options["response_path"] = rp
     elif sut_backend == "openai":
         sut_options["api_key"] = getattr(args, "sut_api_key", None) or os.getenv("OPENAI_API_KEY") or defaults.get("sut_api_key")
     log_path = None
     if getattr(args, "log", None):
         log_path = Path(args.log)
     batch_summary = getattr(args, "batch_summary", False)
+    history_path = None
+    if getattr(args, "history", None) or os.getenv("HISTORY_FILE"):
+        history_path = Path(args.history or os.getenv("HISTORY_FILE", ""))
+    notify_webhook = getattr(args, "notify_webhook", None) or os.getenv("NOTIFY_WEBHOOK") or None
 
     try:
         prompts_list = get_sut_prompts_list(args)
@@ -998,6 +1065,19 @@ async def main_async(args: argparse.Namespace) -> int:
                 console.print("[bold red]No personas left after --personas filter.[/bold red]")
                 return 1
 
+        if getattr(args, "dry_run", False):
+            _print_dry_run(
+                personas,
+                prompts_list,
+                criterion_ids,
+                len(extra_criterion_specs) if extra_criterion_specs else 0,
+                sut_backend,
+                sut_model,
+                judge_model,
+                mock,
+            )
+            return 0
+
         summary: list[Dict[str, Any]] = []
         sem = asyncio.Semaphore(parallel) if parallel > 1 else None
         tasks = []
@@ -1025,6 +1105,7 @@ async def main_async(args: argparse.Namespace) -> int:
                             sem,
                             sut_backend,
                             sut_options,
+                            history_path,
                         )
                     )
             else:
@@ -1047,6 +1128,7 @@ async def main_async(args: argparse.Namespace) -> int:
                         sem,
                         sut_backend,
                         sut_options,
+                        history_path,
                     )
                 )
         if tasks:
@@ -1087,21 +1169,25 @@ async def main_async(args: argparse.Namespace) -> int:
         if fail_under is not None:
             for item in summary:
                 if "error" in item:
+                    _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
                     return 1
                 s = item.get("score")
                 if s is not None and int(s) < fail_under:
                     if not quiet:
                         console.print(f"[bold red]Score {s} below --fail-under {fail_under}[/bold red]")
+                    _notify_failure(notify_webhook, f"Safety tester failed: score {s} below --fail-under {fail_under}.", summary)
                     return 1
         if fail_under_criteria:
             for item in summary:
                 if "error" in item:
+                    _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
                     return 1
                 scores = item.get("criterion_scores") or {}
                 for cid, min_score in fail_under_criteria.items():
                     if scores.get(cid, 0) < min_score:
                         if not quiet:
                             console.print(f"[bold red]Criterion {cid} score {scores.get(cid, 0)} below --fail-under-criteria {cid}={min_score}[/bold red]")
+                        _notify_failure(notify_webhook, f"Safety tester failed: criterion {cid} below threshold.", summary)
                         return 1
         if compare_baseline:
             for item in summary:
@@ -1115,6 +1201,7 @@ async def main_async(args: argparse.Namespace) -> int:
                     baseline_path = output_dir / f"baseline_{pname}.json"
                 baseline_scores = _load_baseline(baseline_path)
                 if baseline_scores and not _check_baseline(pname, item.get("criterion_scores") or {}, baseline_scores, quiet):
+                    _notify_failure(notify_webhook, "Safety tester failed: regression vs baseline.", summary)
                     return 1
         return 0
 
@@ -1123,6 +1210,19 @@ async def main_async(args: argparse.Namespace) -> int:
         persona_list = personas_override
     else:
         persona_list = [args.persona]
+
+    if getattr(args, "dry_run", False):
+        _print_dry_run(
+            persona_list,
+            prompts_list,
+            criterion_ids,
+            len(extra_criterion_specs) if extra_criterion_specs else 0,
+            sut_backend,
+            sut_model,
+            judge_model,
+            mock,
+        )
+        return 0
 
     sem = asyncio.Semaphore(parallel) if parallel > 1 else None
     tasks = []
@@ -1148,6 +1248,7 @@ async def main_async(args: argparse.Namespace) -> int:
                         sem,
                         sut_backend,
                         sut_options,
+                        history_path,
                     )
                 )
         else:
@@ -1170,6 +1271,7 @@ async def main_async(args: argparse.Namespace) -> int:
                     sem,
                     sut_backend,
                     sut_options,
+                    history_path,
                 )
             )
     summary = list(await asyncio.gather(*tasks)) if tasks else []
@@ -1206,25 +1308,30 @@ async def main_async(args: argparse.Namespace) -> int:
     if fail_under is not None:
         for item in summary:
             if "error" in item:
+                _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
                 return 1
             s = item.get("score")
             if s is not None and int(s) < fail_under:
                 if not quiet:
                     console.print(f"[bold red]Score {s} below --fail-under {fail_under}[/bold red]")
+                _notify_failure(notify_webhook, f"Safety tester failed: score {s} below --fail-under {fail_under}.", summary)
                 return 1
     if fail_under_criteria:
         for item in summary:
             if "error" in item:
+                _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
                 return 1
             scores = item.get("criterion_scores") or {}
             for cid, min_score in fail_under_criteria.items():
                 if scores.get(cid, 0) < min_score:
                     if not quiet:
                         console.print(f"[bold red]Criterion {cid} score {scores.get(cid, 0)} below threshold {min_score}[/bold red]")
+                    _notify_failure(notify_webhook, f"Safety tester failed: criterion {cid} below threshold.", summary)
                     return 1
     if compare_baseline:
         for item in summary:
             if "error" in item:
+                _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
                 return 1
             pname = item.get("persona_name", "")
             if baseline_path_or_dir:
@@ -1234,6 +1341,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 baseline_path = output_dir / f"baseline_{pname}.json"
             baseline_scores = _load_baseline(baseline_path)
             if baseline_scores and not _check_baseline(pname, item.get("criterion_scores") or {}, baseline_scores, quiet):
+                _notify_failure(notify_webhook, "Safety tester failed: regression vs baseline.", summary)
                 return 1
     return 0
 
@@ -1252,6 +1360,33 @@ def _list_personas() -> None:
         console.print(f"  {p.name}")
     if not files:
         console.print("  (none)")
+
+
+def _print_dry_run(
+    persona_names: List[str],
+    prompts_list: Optional[List[Tuple[str, str]]],
+    criterion_ids: Optional[List[str]],
+    extra_criteria_count: int,
+    sut_backend: str,
+    sut_model: str,
+    judge_model: str,
+    mock: bool,
+) -> None:
+    """Print what would run and exit (used with --dry-run)."""
+    console.print("[bold cyan]Dry run — no API calls[/bold cyan]")
+    console.print(f"  SUT backend: {sut_backend}")
+    console.print(f"  SUT model:   {sut_model}")
+    console.print(f"  Judge model: {judge_model}")
+    console.print(f"  Mock:        {mock}")
+    criteria = criterion_ids if criterion_ids else ["(all built-in)"]
+    if extra_criteria_count:
+        criteria = list(criteria) + [f"+ {extra_criteria_count} from file"]
+    console.print(f"  Criteria:    {criteria}")
+    if prompts_list:
+        console.print(f"  SUT prompts: {[p[0] for p in prompts_list]}")
+    n_runs = len(persona_names) * (len(prompts_list) if prompts_list else 1)
+    console.print(f"  Personas:   {persona_names}")
+    console.print(f"  Total runs:  {n_runs}")
 
 
 def _list_criteria() -> None:

@@ -155,6 +155,27 @@ async def openai_backend(
 
 # --- Custom HTTP ---
 
+def _get_by_path(data: Dict[str, Any], path: str) -> Any:
+    """Get a value from a nested dict using dot-separated path, e.g. 'choices.0.message.content'."""
+    if not path:
+        return None
+    parts = path.replace("[", ".").replace("]", "").split(".")
+    obj: Any = data
+    for p in parts:
+        if obj is None or (isinstance(obj, dict) and p not in obj):
+            return None
+        if isinstance(obj, dict):
+            obj = obj.get(p)
+        elif isinstance(obj, list):
+            try:
+                obj = obj[int(p)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+    return obj
+
+
 async def custom_http_backend(
     messages: List[Dict[str, Any]],
     system_prompt: Optional[str] = None,
@@ -162,13 +183,14 @@ async def custom_http_backend(
     *,
     endpoint: Optional[str] = None,
     api_key: Optional[str] = None,
+    response_path: Optional[str] = None,
     **kwargs: Any,
 ) -> str:
     """
     Call a customer's chat API via HTTP POST.
     Expects: POST endpoint, JSON body {"messages": [{"role","content"}], "system": "..." (optional)}.
-    Response: JSON with assistant text in one of: content, choices[0].message.content, text, message.content.
-    Uses SUT_ENDPOINT and optionally SUT_API_KEY from env if not passed.
+    Response: JSON with assistant text. If response_path is set (e.g. "data.reply"), use that dot path;
+    else try content, choices[0].message.content, text, message.content.
     """
     try:
         import httpx
@@ -204,16 +226,19 @@ async def custom_http_backend(
                 resp = await client.post(url, json=body, headers=headers)
                 resp.raise_for_status()
                 data = resp.json() if resp.content else {}
-                # Try common response shapes
-                text = (
-                    data.get("content")
-                    or (data.get("choices") and len(data["choices"]) > 0 and data["choices"][0].get("message", {}).get("content"))
-                    or data.get("text")
-                    or (data.get("message") and data["message"].get("content"))
-                )
+                text = None
+                if response_path:
+                    text = _get_by_path(data, response_path)
+                if not isinstance(text, str) or not text:
+                    text = (
+                        data.get("content")
+                        or (data.get("choices") and len(data["choices"]) > 0 and data["choices"][0].get("message", {}).get("content"))
+                        or data.get("text")
+                        or (data.get("message") and data["message"].get("content"))
+                    )
                 if isinstance(text, str) and text:
                     return text
-                raise ConversationError(f"Custom SUT response had no recognizable content. Keys: {list(data.keys())}")
+                raise ConversationError(f"Custom SUT response had no recognizable content. Keys: {list(data.keys())}" + (f" (path '{response_path}' missing or empty)" if response_path else ""))
         except httpx.HTTPStatusError as e:
             last_error = e
             if e.response.status_code in RETRY_STATUSES and attempt < MAX_RETRIES:

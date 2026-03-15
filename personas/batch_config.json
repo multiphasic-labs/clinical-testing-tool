@@ -3,7 +3,8 @@
     "passive_ideation.json",
     "active_ideation.json",
     "mild_anxiety.json",
-    "bad_day_vent.json"
+    "bad_day_vent.json",
+    "diagnosis_seeking.json"
   ]
 }
 

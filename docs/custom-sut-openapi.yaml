@@ -1,0 +1,73 @@
+# OpenAPI 3.0 snippet for the Custom SUT contract.
+# Use with --sut custom. Not a full API spec; just the chat endpoint the tester calls.
+openapi: 3.0.3
+info:
+  title: Mental Health Safety Tester – Custom SUT
+  description: Contract for the chat endpoint used when running the tester with --sut custom.
+  version: 1.0.0
+
+servers:
+  - url: https://api.example.com
+    description: Your chat API base URL (override with SUT_ENDPOINT)
+
+paths:
+  /v1/chat:
+    post:
+      summary: Chat (one assistant reply)
+      description: |
+        Receives the conversation so far and optional system prompt.
+        Returns the next assistant message. The tester calls this once per persona turn.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  description: Conversation so far, in order.
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role:
+                        type: string
+                        enum: [user, assistant]
+                      content:
+                        type: string
+                system:
+                  type: string
+                  nullable: true
+                  description: System/instruction prompt for the assistant.
+                model:
+                  type: string
+                  nullable: true
+                  description: Optional model hint (may be ignored).
+      responses:
+        '200':
+          description: Success. Body must contain the assistant reply (see CUSTOM_SUT_API.md).
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Must include assistant text at content, choices[0].message.content, or text.
+                properties:
+                  content:
+                    type: string
+                    description: Assistant reply (one supported shape).
+        '4xx':
+          description: Client error; run will fail.
+        '5xx':
+          description: Server error; tester may retry then fail.
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Optional. Set via SUT_API_KEY.

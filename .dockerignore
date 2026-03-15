@@ -1,0 +1,17 @@
+# Don't copy into image
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.git/
+.gitignore
+results/
+*.md
+!README.md
+docs/
+.pre-commit-config.yaml
+Dockerfile
+docker-compose*.yml
+.dockerignore

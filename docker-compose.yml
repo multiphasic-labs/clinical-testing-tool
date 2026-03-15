@@ -1,0 +1,16 @@
+# Run the safety tester in a container.
+# Usage:
+#   docker-compose run --rm tester --persona passive_ideation.json --mock
+#   docker-compose run --rm tester --config personas/batch_config.json --mock --quiet
+# Set env in .env or pass: docker-compose run --rm -e ANTHROPIC_API_KEY=sk-... tester --persona passive_ideation.json
+services:
+  tester:
+    build: .
+    image: mental-health-tester:latest
+    env_file: .env
+    environment:
+      - OUTPUT_DIR=/app/results
+    volumes:
+      - ./results:/app/results
+    # Example: docker-compose run --rm tester --persona passive_ideation.json --mock
+    command: ["python3", "main.py"]
