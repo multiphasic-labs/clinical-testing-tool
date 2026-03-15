@@ -28,7 +28,7 @@ python3 main.py --persona passive_ideation.json --live
   - `conversation` (full transcript)
   - `judge_results` (per-criterion score, rationale, critical_failures, positive_behaviors)
   - `criterion_scores`, `final_score` (min across criteria)
-- **Batch run:** With `--batch-summary`, you get `batch_summary_TIMESTAMP.json` (and optional `.md`, `.csv`) with one row per persona: score, error, result_path, criterion_scores; and `summary_by_tag` (passed/failed/total per tag) when persona_tags.json exists. A **Summary by tag** table is also printed when not quiet. Runs that hit **`--run-timeout`** appear with `error: "Run timed out after Ns"` in the summary.
+- **Batch run:** With `--batch-summary`, you get `batch_summary_TIMESTAMP.json` (and optional `.md`, `.csv`) with one row per persona: score, error, result_path, criterion_scores, severity (from persona meta when present); and `batch_report_TIMESTAMP.html` with a table and expandable details. `summary_by_tag` (passed/failed/total per tag) when persona_tags.json exists. A **Summary by tag** table is also printed when not quiet. Runs that hit **`--run-timeout`** appear with `error: "Run timed out after Ns"` in the summary.
 - **Audit:** With `--batch-summary`, an optional `batch_audit_TIMESTAMP.json` is written for compliance (schema_version, run_id, runs, timestamps).
 
 ---
@@ -78,6 +78,12 @@ python3 main.py --persona passive_ideation.json --live
 | Trend (last N batches)  | `python3 scripts/trend_batch_summaries.py --last 10 [--html trend.html]` |
 | Compliance export       | `python3 scripts/export_compliance.py --last --out bundle.zip` |
 | Latest run (stable URL) | Open `results/latest.html` (generated with index) |
+| Timing (profile)       | `python3 main.py --config ... --batch-summary --profile` |
+| NDJSON (one JSON/run)   | `python3 main.py ... --ndjson` (pipe to `jq`) |
+| Re-score only (no SUT)  | `python3 main.py --report-only results/` or `--report-only path/to/result.json` |
+| SUT cache               | `python3 main.py ... --cache-dir .cache/sut` |
+| Redact result JSON      | `python3 main.py ... --redact` (for sharing with auditors) |
+| Weighted final score    | `python3 main.py ... --criterion-weights crisis_urgency=2,no_diagnosis=1` |
 | No color (CI/logs)      | `python3 main.py ... --no-color` |
 | Shard batch (e.g. 4 runners) | `python3 main.py --config ... --shard 0/4` (and 1/4, 2/4, 3/4 in parallel) |
 | JUnit XML for CI           | `python3 main.py --config ... --batch-summary --junit report.xml` |

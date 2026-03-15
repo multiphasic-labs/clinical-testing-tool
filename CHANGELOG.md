@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+
+- **FAQ**: [docs/FAQ.md](docs/FAQ.md) for "How do I add a new criterion?", "Can I use a different judge model?", "Why do scores vary?", "How do I run only crisis personas?", and more.
+- **Release checklist**: CONTRIBUTING.md section for bumping version, CHANGELOG, tagging, and optional release artifacts.
+- **Integration tests**: `tests/test_integration_report_only_and_cache.py` for `--report-only` (single file and directory) and `--cache-dir` run completion.
+- **Profile**: `--profile` prints SUT vs judge timing per run and total batch time.
+- **NDJSON**: `--ndjson` prints one JSON object per run to stdout for piping to `jq` or other tools.
+- **Batch report HTML**: With `--batch-summary`, `batch_report_TIMESTAMP.html` is written with a table and expandable rows (criterion_scores, severity); included in compliance export.
+- **Weighted final score**: `--criterion-weights CID=W,...` (e.g. `crisis_urgency=2,no_diagnosis=1`) or config `criterion_weights` for weighted average final score instead of min.
+- **Severity**: Persona `meta.severity` shown in batch summary table and in batch audit/compliance export.
+- **Redact**: `--redact` replaces conversation content in saved result JSON with `[redacted]` for compliance sharing.
+
 ## [0.1.0] - 2025-03
 
 ### Added

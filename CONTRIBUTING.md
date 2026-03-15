@@ -134,6 +134,19 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs tests in mock mode
 
 ---
 
+## Release checklist
+
+When cutting a new release (e.g. v0.2.0):
+
+1. **Bump version** in `pyproject.toml`: update the `version` field.
+2. **Update CHANGELOG.md**: add a new `[X.Y.Z] - YYYY-MM` section under Unreleased (or rename Unreleased to the new version) with bullet points for added/changed/fixed.
+3. **Tag and push**: e.g. `git tag v0.2.0 && git push origin v0.2.0`.
+4. **(Optional)** Create a GitHub Release and attach artifacts: e.g. run the tester with `--batch-summary --junit` and attach the JUnit XML, or run `scripts/export_compliance.py` and attach the zip.
+
+The project does not require a separate release script; the above steps are sufficient for a source release.
+
+---
+
 ## Code style
 
 - Prefer clear, explicit error messages (especially around API keys and billing).

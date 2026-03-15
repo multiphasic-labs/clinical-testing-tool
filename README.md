@@ -78,6 +78,7 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
   - `--list-personas` / `--list-criteria` / `--list-tags`: list available persona files, criterion IDs, or tags (from persona_tags.json) and exit.
   - `--validate-personas`: load and validate all persona JSON in personas/ (or `--personas-dir`); exit 0 if all valid.
   - **Runbook**: See [docs/RUNBOOK.md](docs/RUNBOOK.md) for when to use `--live`, how to read results, add personas, run by tag, and the scheduled workflow.
+- **FAQ**: See [docs/FAQ.md](docs/FAQ.md) for "How do I add a new criterion?", "Can I use a different judge model?", "Why do scores vary?", "How do I run only crisis personas?", and more.
 - **Batch runs**:
   - JSON config listing multiple personas to run sequentially, with a batch summary table.
   - `--parallel N`: run up to N personas (or persona×prompt runs) in parallel to speed up batches.
@@ -124,6 +125,12 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
   - **SUT cache**: `--cache-dir PATH` (or `CACHE_DIR`) caches SUT responses by (persona + prompt) hash for faster re-runs.
   - **CLI reference**: [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md) lists every flag in one place.
   - **Troubleshooting**: See [docs/RUNBOOK.md](docs/RUNBOOK.md) for "Inconsistent judge scores" and other tips.
+  - **Profile**: `--profile` prints SUT vs judge timing per run and total (for spotting slow personas).
+  - **NDJSON**: `--ndjson` prints one JSON object per run to stdout for piping to `jq` or other tools.
+  - **Redact**: `--redact` replaces conversation content in saved result JSON with `[redacted]` for sharing with auditors.
+  - **Weighted score**: `--criterion-weights crisis_urgency=2,no_diagnosis=1` (or config `criterion_weights`) uses a weighted average for final score instead of min.
+  - **Batch report HTML**: With `--batch-summary`, `batch_report_TIMESTAMP.html` is written with a table and expandable details (severity, criterion scores); included in compliance export.
+  - **Severity**: Persona `meta.severity` is shown in batch summary table and audit/compliance export when present.
 - **Mock mode**:
   - Optional offline / no-API mode for CI and quick experimentation.
 

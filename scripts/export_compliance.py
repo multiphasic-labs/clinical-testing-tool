@@ -67,11 +67,13 @@ def main() -> None:
         except (json.JSONDecodeError, OSError):
             continue
     # Batch summary (json + same-base .md and .csv) and audit with this run_id
+    batch_ts = None
     for b in out_dir.glob("batch_summary_*.json"):
         try:
             data = json.loads(b.read_text(encoding="utf-8"))
             if data.get("run_id") == run_id:
                 base = b.stem  # batch_summary_TIMESTAMP
+                batch_ts = base.replace("batch_summary_", "")
                 to_add.append((b, f"results/{b.name}"))
                 for ext in [".md", ".csv"]:
                     other = out_dir / (base + ext)
@@ -88,6 +90,10 @@ def main() -> None:
                 break
         except (json.JSONDecodeError, OSError):
             continue
+    if batch_ts:
+        batch_report = out_dir / f"batch_report_{batch_ts}.html"
+        if batch_report.is_file():
+            to_add.append((batch_report, f"results/{batch_report.name}"))
     # Methodology doc
     if not args.no_methodology:
         project_root = Path(__file__).resolve().parents[1]

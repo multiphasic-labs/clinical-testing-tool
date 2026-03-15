@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -387,6 +388,28 @@ def parse_args() -> argparse.Namespace:
         metavar="PATH",
         help="Cache SUT responses by (persona + prompt) hash. Re-use for re-judging or parallel runs. Env: CACHE_DIR.",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Print timing per run (SUT vs judge) and total batch time.",
+    )
+    parser.add_argument(
+        "--ndjson",
+        action="store_true",
+        help="Print one JSON object per run to stdout (for piping to jq etc.).",
+    )
+    parser.add_argument(
+        "--redact",
+        action="store_true",
+        help="Redact conversation content in saved result JSON (replace with [redacted]) for compliance sharing.",
+    )
+    parser.add_argument(
+        "--criterion-weights",
+        type=str,
+        default=None,
+        metavar="CID=W,...",
+        help="Weight criteria for final score (e.g. crisis_urgency=2,no_diagnosis=1). Default: min across criteria.",
+    )
     return parser.parse_args()
 
 
@@ -537,6 +560,21 @@ def get_sut_prompts_list(args: argparse.Namespace) -> Optional[List[Tuple[str, s
     return out if out else None
 
 
+def _redact_conversation(conversation: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy of conversation with message content replaced by [redacted]."""
+    import copy
+    out = copy.deepcopy(conversation)
+    for turn in out.get("turns", []):
+        if "user_message" in turn:
+            turn["user_message"] = "[redacted]"
+        if "system_response" in turn:
+            turn["system_response"] = "[redacted]"
+    for msg in out.get("conversation_for_judge", []):
+        if "content" in msg:
+            msg["content"] = "[redacted]"
+    return out
+
+
 def save_result_json(
     results_dir: Path,
     persona_name: str,
@@ -545,6 +583,8 @@ def save_result_json(
     timestamp: Optional[str] = None,
     run_label: Optional[str] = None,
     run_id: Optional[str] = None,
+    redact: bool = False,
+    criterion_weights: Optional[Dict[str, float]] = None,
 ) -> Path:
     if timestamp is None:
         timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -560,13 +600,22 @@ def save_result_json(
         r.get("criterion_id", f"criterion_{i}"): r.get("parsed", {}).get("score", 0)
         for i, r in enumerate(judge_results)
     }
-    final_score = min(criterion_scores.values()) if criterion_scores else 0
+    if criterion_weights and criterion_scores:
+        total_w = sum(criterion_weights.get(c, 1.0) for c in criterion_scores)
+        if total_w > 0:
+            weighted = sum(criterion_scores.get(c, 0) * criterion_weights.get(c, 1.0) for c in criterion_scores) / total_w
+            final_score = max(0, min(2, round(weighted)))
+        else:
+            final_score = min(criterion_scores.values()) if criterion_scores else 0
+    else:
+        final_score = min(criterion_scores.values()) if criterion_scores else 0
 
+    conv_out = _redact_conversation(conversation) if redact else conversation
     payload = {
         "schema_version": "1",
         "timestamp_utc": timestamp,
         "persona_name": persona_name,
-        "conversation": conversation,
+        "conversation": conv_out,
         "judge_results": judge_results,
         "criterion_scores": criterion_scores,
         "final_score": final_score,
@@ -844,11 +893,19 @@ async def run_single_persona(
     judge_backend: str = "anthropic",
     judge_temperature: float = 0.0,
     cache_dir: Optional[Path] = None,
+    profile: bool = False,
+    redact: bool = False,
+    criterion_weights: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     persona_path = resolve_persona_path(persona_name)
+    sut_seconds: Optional[float] = None
+    judge_seconds: Optional[float] = None
 
     if mock:
         conversation = _mock_conversation(persona_name)
+        if profile:
+            sut_seconds = 0.0
+            judge_seconds = 0.0
     else:
         cache_hit = False
         if cache_dir and cache_dir.is_dir():
@@ -870,6 +927,8 @@ async def run_single_persona(
                     pass
         if not cache_hit:
             try:
+                if profile:
+                    _t0 = time.perf_counter()
                 conversation = await run_conversation(
                     persona_path,
                     model=sut_model,
@@ -877,6 +936,8 @@ async def run_single_persona(
                     sut_backend=sut_backend,
                     sut_options=sut_options,
                 )
+                if profile:
+                    sut_seconds = time.perf_counter() - _t0
                 if cache_dir and cache_dir.is_dir():
                     cache_dir.mkdir(parents=True, exist_ok=True)
                     import hashlib
@@ -902,8 +963,14 @@ async def run_single_persona(
 
     if mock:
         judge_results = _mock_judge_all(criterion_ids=criterion_ids, extra_specs=extra_criterion_specs)
+        if profile and sut_seconds is None:
+            sut_seconds = 0.0
+        if profile and judge_seconds is None:
+            judge_seconds = 0.0
     else:
         try:
+            if profile:
+                _t0 = time.perf_counter()
             judge_results = await score_all_criteria(
                 conversation["conversation_for_judge"],
                 model=judge_model,
@@ -912,6 +979,8 @@ async def run_single_persona(
                 judge_backend=judge_backend,
                 temperature=judge_temperature,
             )
+            if profile:
+                judge_seconds = time.perf_counter() - _t0
         except Exception as e:
             console.print(f"[bold red]Judge error for persona '{persona_name}':[/bold red] {e}")
             pname = conversation.get("persona_name", persona_name)
@@ -942,6 +1011,8 @@ async def run_single_persona(
         timestamp=timestamp,
         run_label=run_label,
         run_id=run_id,
+        redact=redact,
+        criterion_weights=criterion_weights,
     )
 
     if write_md:
@@ -974,7 +1045,11 @@ async def run_single_persona(
         console.print(f"persona={persona_display} score={final_score} criterion_scores={criterion_scores} path={result_path}")
 
     criterion_scores = {r.get("criterion_id", f"c{i}"): r.get("parsed", {}).get("score", 0) for i, r in enumerate(judge_results)}
-    final_score = min(criterion_scores.values()) if criterion_scores else 0
+    if criterion_weights and criterion_scores:
+        total_w = sum(criterion_weights.get(c, 1.0) for c in criterion_scores)
+        final_score = max(0, min(2, round(sum(criterion_scores.get(c, 0) * criterion_weights.get(c, 1.0) for c in criterion_scores) / total_w))) if total_w > 0 else (min(criterion_scores.values()) if criterion_scores else 0)
+    else:
+        final_score = min(criterion_scores.values()) if criterion_scores else 0
 
     _log_line(
         log_path,
@@ -989,6 +1064,9 @@ async def run_single_persona(
     }
     if run_label is not None:
         out["run_label"] = run_label
+    if profile and (sut_seconds is not None or judge_seconds is not None):
+        out["sut_seconds"] = sut_seconds
+        out["judge_seconds"] = judge_seconds
     try:
         meta = load_persona_metadata(persona_path)
         if meta:
@@ -1023,6 +1101,24 @@ def _parse_fail_under_criteria(value: Optional[str]) -> Optional[Dict[str, int]]
         cid, n = cid.strip(), n.strip()
         try:
             out[cid] = int(n)
+        except ValueError:
+            continue
+    return out if out else None
+
+
+def _parse_criterion_weights(value: Optional[str]) -> Optional[Dict[str, float]]:
+    """Parse e.g. crisis_urgency=2,no_diagnosis=1 into {criterion_id: weight}."""
+    if not value:
+        return None
+    out: Dict[str, float] = {}
+    for part in value.split(","):
+        part = part.strip()
+        if "=" not in part:
+            continue
+        cid, _, w = part.partition("=")
+        cid, w = cid.strip(), w.strip()
+        try:
+            out[cid] = float(w)
         except ValueError:
             continue
     return out if out else None
@@ -1140,6 +1236,9 @@ async def _run_one(
     judge_backend: str = "anthropic",
     judge_temperature: float = 0.0,
     cache_dir: Optional[Path] = None,
+    profile: bool = False,
+    redact: bool = False,
+    criterion_weights: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     """Run a single persona (optionally under a semaphore for parallel batch)."""
     async def _do() -> Dict[str, Any]:
@@ -1151,6 +1250,9 @@ async def _run_one(
             mock=mock,
             judge_temperature=judge_temperature,
             cache_dir=cache_dir,
+            profile=profile,
+            redact=redact,
+            criterion_weights=criterion_weights,
             output_dir=output_dir,
             quiet=quiet,
             write_md=write_md,
@@ -1491,6 +1593,9 @@ def _write_batch_summary(
         }
         if item.get("persona_meta"):
             row["persona_meta"] = item["persona_meta"]
+            row["severity"] = item["persona_meta"].get("severity")
+        else:
+            row["severity"] = None
         rows.append(row)
     payload: Dict[str, Any] = {"schema_version": "1", "timestamp_utc": timestamp, "runs": rows}
     if run_id:
@@ -1557,6 +1662,7 @@ def _write_batch_summary(
                 {
                     "persona": r["persona"],
                     "run_label": r.get("run_label", ""),
+                    "severity": r.get("severity"),
                     "score": r.get("score"),
                     "error": r.get("error"),
                     "result_path": r.get("result_path"),
@@ -1575,6 +1681,62 @@ def _write_batch_summary(
             pass
         with audit_path.open("w", encoding="utf-8") as f:
             json.dump(audit_data, f, indent=2, ensure_ascii=False)
+    _write_batch_report_html(output_dir, summary, timestamp, rows)
+
+
+def _write_batch_report_html(
+    output_dir: Path,
+    summary: List[Dict[str, Any]],
+    timestamp: str,
+    rows: List[Dict[str, Any]],
+) -> None:
+    """Write batch_report_TIMESTAMP.html with a table and expandable rows (criterion_scores, severity)."""
+    path = output_dir / f"batch_report_{timestamp}.html"
+    severity_col = '<th>Severity</th>' if any(r.get("severity") for r in rows) else ''
+    trs = []
+    for r in rows:
+        persona = _escape_html(str(r.get("persona", "")))
+        run_label = _escape_html(str(r.get("run_label", "") or ""))
+        label = f"{persona}" + (f" ({run_label})" if run_label else "")
+        score = r.get("score")
+        score_str = str(score) if score is not None else "—"
+        err = _escape_html(str(r.get("error") or ""))
+        rpath = r.get("result_path") or ""
+        result_basename = Path(rpath).name if rpath else "—"
+        href = _escape_html(result_basename) if rpath else "#"
+        sev = _escape_html(str(r.get("severity") or ""))
+        cs = r.get("criterion_scores") or {}
+        details = "<br />".join(f"{k}: {v}" for k, v in sorted(cs.items()))
+        severity_cell = f'<td>{sev}</td>' if severity_col else ''
+        trs.append(
+            f'<tr><td>{label}</td>{severity_cell}<td>{score_str}</td><td>{err}</td>'
+            f'<td><a href="{href}">{_escape_html(result_basename)}</a></td>'
+            f'<td><details><summary>Details</summary><pre>{_escape_html(details)}</pre></details></td></tr>'
+        )
+    table_rows = "\n".join(trs)
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>Batch report — {_escape_html(timestamp)}</title>
+<style>table {{ border-collapse: collapse; }} th, td {{ border: 1px solid #ccc; padding: 6px; }} pre {{ margin: 0; }}</style></head>
+<body><h1>Batch report — {timestamp}</h1>
+<table><thead><tr><th>Persona</th>{severity_col}<th>Score</th><th>Error</th><th>Result</th><th>Details</th></tr></thead>
+<tbody>
+{table_rows}
+</tbody></table></body></html>"""
+    try:
+        path.write_text(html, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _escape_html(s: str) -> str:
+    """Escape for HTML text content."""
+    return (
+        s.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 def _write_junit(
@@ -1660,6 +1822,7 @@ async def main_async(args: argparse.Namespace) -> int:
         output_dir = Path(defaults["output_dir"])
         output_dir.mkdir(parents=True, exist_ok=True)
     quiet = getattr(args, "quiet", False)
+    profile = getattr(args, "profile", False)
     write_md = getattr(args, "md", False)
     write_csv = getattr(args, "csv", False)
     criterion_ids = _parse_list_arg(getattr(args, "criteria", None))
@@ -1727,6 +1890,8 @@ async def main_async(args: argparse.Namespace) -> int:
     fail_under_criteria = _parse_fail_under_criteria(getattr(args, "fail_under_criteria", None))
     compare_baseline = getattr(args, "compare_baseline", False)
     baseline_path_or_dir = getattr(args, "baseline", None)
+    redact = getattr(args, "redact", False)
+    criterion_weights = _parse_criterion_weights(getattr(args, "criterion_weights", None)) or defaults.get("criterion_weights")
 
     extra_criterion_specs: Optional[List[Dict[str, Any]]] = None
     if getattr(args, "criterion_file", None):
@@ -1852,6 +2017,9 @@ async def main_async(args: argparse.Namespace) -> int:
                     judge_backend=judge_backend,
                     judge_temperature=judge_temperature,
                     cache_dir=cache_dir,
+                    profile=profile,
+                    redact=redact,
+                    criterion_weights=criterion_weights,
                 )
             )
         summary = await _gather_with_progress(tasks, quiet)
@@ -2018,6 +2186,9 @@ async def main_async(args: argparse.Namespace) -> int:
                             judge_backend=judge_backend,
                             judge_temperature=judge_temperature,
                             cache_dir=cache_dir,
+                            profile=profile,
+                            redact=redact,
+                            criterion_weights=criterion_weights,
                         )
                     )
             else:
@@ -2047,6 +2218,9 @@ async def main_async(args: argparse.Namespace) -> int:
                         judge_backend=judge_backend,
                         judge_temperature=judge_temperature,
                         cache_dir=cache_dir,
+                        profile=profile,
+                        redact=redact,
+                        criterion_weights=criterion_weights,
                     )
                 )
         if tasks:
@@ -2220,6 +2394,9 @@ async def main_async(args: argparse.Namespace) -> int:
                         judge_backend=judge_backend,
                         judge_temperature=judge_temperature,
                         cache_dir=cache_dir,
+                        profile=profile,
+                        redact=redact,
+                        criterion_weights=criterion_weights,
                     )
                 )
         else:
@@ -2249,6 +2426,9 @@ async def main_async(args: argparse.Namespace) -> int:
                     judge_backend=judge_backend,
                     judge_temperature=judge_temperature,
                     cache_dir=cache_dir,
+                    profile=profile,
+                    redact=redact,
+                    criterion_weights=criterion_weights,
                 )
             )
     summary = await _gather_with_progress(tasks, quiet) if tasks else []
@@ -2278,23 +2458,40 @@ async def main_async(args: argparse.Namespace) -> int:
                 show_lines=True,
             )
             table.add_column("Persona", style="cyan")
+            show_severity = any((item.get("persona_meta") or {}).get("severity") for item in summary)
+            if show_severity:
+                table.add_column("Severity", style="dim")
             table.add_column("Score", style="white")
             table.add_column("Result File", style="green")
             table.add_column("Error", style="red")
             for item in summary:
                 persona_name = item.get("persona_name", "")
                 error = item.get("error")
+                sev = (item.get("persona_meta") or {}).get("severity") or ""
                 if error:
-                    table.add_row(persona_name, "-", "-", error)
+                    row = [persona_name]
+                    if show_severity:
+                        row.append(sev)
+                    row.extend(["-", "-", error])
+                    table.add_row(*row)
                 else:
                     score = item.get("score")
                     score_text = _style_score(int(score)) if score is not None else Text("?", style="yellow")
-                    table.add_row(persona_name, str(score_text), item.get("result_path", ""), "")
+                    row = [persona_name]
+                    if show_severity:
+                        row.append(sev)
+                    row.extend([str(score_text), item.get("result_path", ""), ""])
+                    table.add_row(*row)
             console.print()
             console.print(table)
             _print_batch_stats(summary, fail_under)
             _print_failed_runs(summary, fail_under)
+            if profile and len(summary) >= 1:
+                _print_profile_table(summary)
             _print_tag_summary(summary, tags_dir, fail_under)
+        if getattr(args, "ndjson", False) and summary:
+            for item in summary:
+                print(json.dumps(item, ensure_ascii=False))
 
     if prompts_list and len(summary) > 0 and not quiet:
         _print_prompt_comparison_table(summary, prompts_list)
@@ -2469,6 +2666,35 @@ def _print_batch_stats(summary: List[Dict[str, Any]], fail_under: Optional[int])
     errors = sum(1 for item in summary if item.get("error"))
     if errors:
         console.print(f"  Errors: {errors}")
+
+
+def _print_profile_table(summary: List[Dict[str, Any]]) -> None:
+    """Print timing per run (SUT and judge seconds) and total."""
+    rows = []
+    total_sut = 0.0
+    total_judge = 0.0
+    for item in summary:
+        name = item.get("persona_name", "?")
+        if item.get("run_label"):
+            name = f"{name}({item.get('run_label')})"
+        sut_s = item.get("sut_seconds")
+        judge_s = item.get("judge_seconds")
+        if sut_s is not None:
+            total_sut += sut_s
+        if judge_s is not None:
+            total_judge += judge_s
+        rows.append((name, sut_s if sut_s is not None else "-", judge_s if judge_s is not None else "-"))
+    if not rows:
+        return
+    console.print()
+    table = Table(title="Profile (seconds)", box=box.SIMPLE, show_header=True)
+    table.add_column("Persona", style="cyan")
+    table.add_column("SUT", style="white")
+    table.add_column("Judge", style="white")
+    for name, sut_s, judge_s in rows:
+        table.add_row(name, str(sut_s), str(judge_s))
+    table.add_row("[bold]Total[/bold]", f"{total_sut:.2f}", f"{total_judge:.2f}")
+    console.print(table)
 
 
 def _print_failed_runs(summary: List[Dict[str, Any]], fail_under: Optional[int]) -> None:

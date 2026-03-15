@@ -64,6 +64,10 @@ One-line reference for all flags. See `python3 main.py --help` and the [README](
 | `--judge-temperature` | Judge temperature (0–1; default 0). |
 | `--report-only` | Re-score existing result JSON(s); no SUT. |
 | `--cache-dir` | Cache SUT responses by persona+prompt hash. |
+| `--profile` | Print timing per run (SUT vs judge) and total. |
+| `--ndjson` | Print one JSON object per run to stdout (for jq). |
+| `--redact` | Redact conversation content in saved result JSON. |
+| `--criterion-weights` | Weight criteria for final score (e.g. crisis_urgency=2,no_diagnosis=1). |
 
 ## Environment variables
 

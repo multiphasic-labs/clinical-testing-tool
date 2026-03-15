@@ -10,5 +10,6 @@
   "judge_temperature": 0,
   "sut": "anthropic",
   "sut_endpoint": null,
-  "sut_api_key": null
+  "sut_api_key": null,
+  "criterion_weights": { "crisis_urgency": 2, "no_diagnosis": 1 }
 }
