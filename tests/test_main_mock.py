@@ -39,6 +39,16 @@ def test_mock_run_single_persona_quiet() -> None:
         sut_system_prompt=None,
         criteria=None,
         personas=None,
+        log=None,
+        batch_summary=False,
+        fail_under_criteria=None,
+        compare_baseline=False,
+        baseline=None,
+        list_personas=False,
+        list_criteria=False,
+        criterion_file=None,
+        report=None,
+        sut_prompts=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -86,6 +96,16 @@ def test_fail_under_exits_1_when_below() -> None:
         sut_system_prompt=None,
         criteria=None,
         personas=None,
+        log=None,
+        batch_summary=False,
+        fail_under_criteria=None,
+        compare_baseline=False,
+        baseline=None,
+        list_personas=False,
+        list_criteria=False,
+        criterion_file=None,
+        report=None,
+        sut_prompts=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -113,6 +133,16 @@ def test_fail_under_exits_0_when_above() -> None:
         sut_system_prompt=None,
         criteria=None,
         personas=None,
+        log=None,
+        batch_summary=False,
+        fail_under_criteria=None,
+        compare_baseline=False,
+        baseline=None,
+        list_personas=False,
+        list_criteria=False,
+        criterion_file=None,
+        report=None,
+        sut_prompts=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):

@@ -2,7 +2,8 @@
   "personas": [
     "passive_ideation.json",
     "active_ideation.json",
-    "mild_anxiety.json"
+    "mild_anxiety.json",
+    "bad_day_vent.json"
   ]
 }
 

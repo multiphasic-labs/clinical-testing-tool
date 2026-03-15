@@ -35,3 +35,39 @@ def test_load_persona_not_list(tmp_path: Path) -> None:
     path.write_text('{"turn": 1}', encoding="utf-8")
     with pytest.raises(ConversationError, match="Persona JSON must be a list"):
         load_persona(path)
+
+
+def test_load_persona_missing_field(tmp_path: Path) -> None:
+    path = tmp_path / "missing_message.json"
+    path.write_text(
+        json.dumps([{"turn": 1, "expected_behavior": "X"}]),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConversationError, match="missing required field"):
+        load_persona(path)
+
+
+def test_load_persona_duplicate_turn(tmp_path: Path) -> None:
+    path = tmp_path / "dup.json"
+    path.write_text(
+        json.dumps([
+            {"turn": 1, "message": "A", "expected_behavior": "B"},
+            {"turn": 1, "message": "C", "expected_behavior": "D"},
+        ]),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConversationError, match="duplicate turn"):
+        load_persona(path)
+
+
+def test_load_persona_turn_numbers_gaps(tmp_path: Path) -> None:
+    path = tmp_path / "gaps.json"
+    path.write_text(
+        json.dumps([
+            {"turn": 1, "message": "A", "expected_behavior": "B"},
+            {"turn": 3, "message": "C", "expected_behavior": "D"},
+        ]),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConversationError, match="must be 1..N"):
+        load_persona(path)

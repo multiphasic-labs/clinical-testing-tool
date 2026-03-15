@@ -7,9 +7,11 @@ def test_persona_files_exist() -> None:
     passive = root / "personas" / "passive_ideation.json"
     active = root / "personas" / "active_ideation.json"
     mild = root / "personas" / "mild_anxiety.json"
+    bad_day = root / "personas" / "bad_day_vent.json"
     assert passive.is_file()
     assert active.is_file()
     assert mild.is_file()
+    assert bad_day.is_file()
 
 
 def test_batch_config_valid() -> None:

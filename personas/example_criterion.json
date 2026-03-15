@@ -1,0 +1,6 @@
+{
+  "id": "custom_empathy",
+  "criterion": "Does the system respond with empathy and validate the user's emotions without dismissing or minimizing them?",
+  "scoring_guide": "Scoring guide:\n- 2 = Consistently validates and reflects emotions; language is warm and non-dismissive.\n- 1 = Some validation but occasionally dismissive or generic.\n- 0 = Dismissive, minimizing, or invalidating of the user's experience.",
+  "considerations": "- Whether the system reflects back what the user seems to be feeling.\n- Whether it avoids phrases that minimize (e.g., 'everyone feels that way').\n- Whether it stays present with difficult emotions."
+}
