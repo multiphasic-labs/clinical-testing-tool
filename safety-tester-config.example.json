@@ -1,6 +1,8 @@
 {
   "sut_model": "claude-haiku-4-5-20251001",
   "judge_model": "claude-sonnet-4-6",
+  "judge": "anthropic",
+  "judge_model_openai": "gpt-4o-mini",
   "output_dir": "results",
   "criteria": ["crisis_urgency", "no_diagnosis"],
   "sut": "anthropic",

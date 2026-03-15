@@ -163,7 +163,26 @@ def main() -> None:
 
     html += "\n</body>\n</html>"
     index_path.write_text(html, encoding="utf-8")
-    print(f"Wrote {index_path} ({len(single_runs)} runs, {len(batch_summaries)} batch summaries, {len(batch_audits)} audits)")
+
+    # Stable "latest" link: redirect to most recent run's HTML report, or index if none
+    latest_path = out_dir / "latest.html"
+    latest_target = None
+    for r in single_runs:
+        if r.get("html") and (out_dir / r["html"]).is_file():
+            latest_target = r["html"]
+            break
+    if latest_target:
+        latest_path.write_text(
+            f'<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url={latest_target}"><title>Latest run</title></head><body><p>Redirecting to <a href="{latest_target}">latest report</a>...</p></body></html>',
+            encoding="utf-8",
+        )
+    else:
+        latest_path.write_text(
+            '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=index.html"><title>Latest</title></head><body><p>No single-run HTML reports. Redirecting to <a href="index.html">results index</a>...</p></body></html>',
+            encoding="utf-8",
+        )
+
+    print(f"Wrote {index_path} ({len(single_runs)} runs, {len(batch_summaries)} batch summaries, {len(batch_audits)} audits); latest.html -> {latest_target or 'index.html'}")
 
 
 if __name__ == "__main__":

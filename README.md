@@ -456,8 +456,17 @@ python3 main.py --config personas/batch_config.json --batch-summary --write-inde
 ### Run timeout, judge backend, and criteria directory
 
 - **`--run-timeout SECONDS`** — Timeout per persona run; on timeout the run is recorded as failed and the batch continues.
-- **`--judge anthropic|openai`** — Judge backend. Default is `anthropic`. Use `openai` with `OPENAI_API_KEY` set (e.g. for `gpt-4o-mini`).
+- **`--judge anthropic|openai`** — Judge backend. Default is `anthropic`. Use `openai` with `OPENAI_API_KEY` set. When using OpenAI, set **`JUDGE_MODEL_OPENAI`** (e.g. `gpt-4o-mini`) or use config `judge_model_openai`.
 - **`--criteria-dir PATH`** — Load all criterion JSON files from a directory and add them to the criteria run (in addition to `--criterion-file` if set).
+- **`--notify-format slack`** — Format webhook payload as Slack blocks (use with Slack incoming webhook URL). Env: `NOTIFY_FORMAT`.
+
+With **`--quiet`**, a one-line summary is printed at the end: `Passed: N, Failed: M`. Result and batch JSONs include **`tool_version`** (from `pyproject.toml`) for traceability.
+
+### Trend and compliance export
+
+- **Trend (last N batch summaries):** `python3 scripts/trend_batch_summaries.py [--output-dir results] [--last 10] [--html trend.html]`
+- **Compliance bundle (zip for auditors):** `python3 scripts/export_compliance.py --last --out bundle.zip` or `--run-id ID --out bundle.zip`. Includes result JSONs, batch summary/audit, and optional `docs/METHODOLOGY.md`.
+- **Stable latest link:** `scripts/generate_results_index.py` also writes **`results/latest.html`**, which redirects to the most recent run’s HTML report (or to `index.html` if none).
 
 ### Approximate cost and rate notes
 

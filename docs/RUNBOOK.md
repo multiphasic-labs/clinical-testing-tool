@@ -68,5 +68,9 @@ python3 main.py --persona passive_ideation.json --live
 | Add persona (interactive)| `python3 scripts/add_persona.py` |
 | Generate results index    | `python3 scripts/generate_results_index.py` (or use `--write-index` after a run) |
 | Run with timeout (e.g. 300s per run) | `python3 main.py --config ... --run-timeout 300` |
-| Use OpenAI as judge     | `python3 main.py --judge openai` (requires OPENAI_API_KEY) |
+| Use OpenAI as judge     | `python3 main.py --judge openai` (set `JUDGE_MODEL_OPENAI` or config `judge_model_openai`) |
 | Load criteria from dir  | `python3 main.py --criteria-dir path/to/criteria` |
+| Slack webhook format    | `python3 main.py ... --notify-webhook URL --notify-format slack` |
+| Trend (last N batches)  | `python3 scripts/trend_batch_summaries.py --last 10 [--html trend.html]` |
+| Compliance export       | `python3 scripts/export_compliance.py --last --out bundle.zip` |
+| Latest run (stable URL) | Open `results/latest.html` (generated with index) |

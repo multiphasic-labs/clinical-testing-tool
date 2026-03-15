@@ -284,6 +284,13 @@ def parse_args() -> argparse.Namespace:
         help="When run passes (exit 0), POST a summary to --notify-webhook (or NOTIFY_WEBHOOK).",
     )
     parser.add_argument(
+        "--notify-format",
+        type=str,
+        default=None,
+        choices=["slack"],
+        help="Webhook payload format: 'slack' for Slack blocks (use with Slack incoming webhook). Env: NOTIFY_FORMAT.",
+    )
+    parser.add_argument(
         "--version",
         action="store_true",
         help="Print version and exit.",
@@ -489,6 +496,10 @@ def save_result_json(
     }
     if run_id:
         payload["run_id"] = run_id
+    try:
+        payload["tool_version"] = _get_version()
+    except Exception:
+        pass
 
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
@@ -1055,27 +1066,68 @@ async def _run_one(
     return await coro
 
 
-def _notify_failure(webhook_url: Optional[str], message: str, summary: Optional[List[Dict[str, Any]]] = None) -> None:
+def _build_notify_payload(
+    message: str,
+    passed: bool,
+    summary: Optional[List[Dict[str, Any]]],
+    notify_format: Optional[str],
+) -> str:
+    """Build JSON payload for webhook. If notify_format is 'slack', use Slack blocks."""
+    if (notify_format or "").strip().lower() == "slack":
+        lines = [f"*Mental Health Safety Tester*: {message}"]
+        if summary:
+            for s in (summary or [])[:15]:
+                p = s.get("persona_name", "?")
+                sc = s.get("score")
+                err = s.get("error")
+                if err:
+                    lines.append(f"• {p}: error")
+                else:
+                    lines.append(f"• {p}: score {sc}")
+            if len(summary) > 15:
+                lines.append(f"_... and {len(summary) - 15} more_")
+        text = "\n".join(lines)
+        payload = {
+            "text": message,
+            "blocks": [
+                {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+            ],
+        }
+        return json.dumps(payload)
+    return json.dumps({"text": message, "passed": passed, "runs": summary})
+
+
+def _notify_failure(
+    webhook_url: Optional[str],
+    message: str,
+    summary: Optional[List[Dict[str, Any]]] = None,
+    notify_format: Optional[str] = None,
+) -> None:
     """POST a JSON payload to webhook_url (e.g. Slack) on failure. Silently ignore errors."""
     if not webhook_url or not webhook_url.strip():
         return
     try:
         import urllib.request
-        payload = json.dumps({"text": message, "passed": False, "runs": summary}).encode("utf-8")
-        req = urllib.request.Request(webhook_url, data=payload, method="POST", headers={"Content-Type": "application/json"})
+        body = _build_notify_payload(message, False, summary, notify_format)
+        req = urllib.request.Request(webhook_url, data=body.encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=10)
     except Exception:
         pass
 
 
-def _notify_success(webhook_url: Optional[str], summary: List[Dict[str, Any]], message: str) -> None:
+def _notify_success(
+    webhook_url: Optional[str],
+    summary: List[Dict[str, Any]],
+    message: str,
+    notify_format: Optional[str] = None,
+) -> None:
     """POST a JSON payload to webhook_url on success. Silently ignore errors."""
     if not webhook_url or not webhook_url.strip():
         return
     try:
         import urllib.request
-        payload = json.dumps({"text": message, "passed": True, "runs": summary}).encode("utf-8")
-        req = urllib.request.Request(webhook_url, data=payload, method="POST", headers={"Content-Type": "application/json"})
+        body = _build_notify_payload(message, True, summary, notify_format)
+        req = urllib.request.Request(webhook_url, data=body.encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=10)
     except Exception:
         pass
@@ -1178,6 +1230,16 @@ def _maybe_save_baseline_and_notify_success(
     quiet: bool,
 ) -> None:
     """If --save-baseline or --notify-success set, save baselines and/or POST success to webhook."""
+    if quiet and summary:
+        fail_under = getattr(args, "fail_under", None)
+        passed = sum(
+            1
+            for s in summary
+            if not s.get("error")
+            and (fail_under is None or (s.get("score") is not None and int(s["score"]) >= fail_under))
+        )
+        failed = len(summary) - passed
+        console.print(f"Passed: {passed}, Failed: {failed}")
     if getattr(args, "save_baseline", False):
         for item in summary:
             if item.get("error"):
@@ -1194,7 +1256,7 @@ def _maybe_save_baseline_and_notify_success(
         n = len(summary)
         failed = sum(1 for s in summary if s.get("error"))
         msg = f"Safety run passed: {n} run(s), all scores meet threshold." if failed == 0 else f"Safety run completed: {n} run(s)."
-        _notify_success(notify_webhook, summary, msg)
+        _notify_success(notify_webhook, summary, msg, getattr(args, "notify_format", None) or os.getenv("NOTIFY_FORMAT"))
     if getattr(args, "branded_report", None) and summary:
         _write_branded_report(Path(args.branded_report), summary, getattr(args, "report_branding_title", None))
     if getattr(args, "write_index", False):
@@ -1309,6 +1371,10 @@ def _write_batch_summary(
     payload: Dict[str, Any] = {"schema_version": "1", "timestamp_utc": timestamp, "runs": rows}
     if run_id:
         payload["run_id"] = run_id
+    try:
+        payload["tool_version"] = _get_version()
+    except Exception:
+        pass
     summary_by_tag = _compute_summary_by_tag(summary, tags_dir, fail_under) if tags_dir else {}
     if summary_by_tag:
         payload["summary_by_tag"] = summary_by_tag
@@ -1379,6 +1445,10 @@ def _write_batch_summary(
             audit_data["run_id"] = run_id
         if summary_by_tag:
             audit_data["summary_by_tag"] = summary_by_tag
+        try:
+            audit_data["tool_version"] = _get_version()
+        except Exception:
+            pass
         with audit_path.open("w", encoding="utf-8") as f:
             json.dump(audit_data, f, indent=2, ensure_ascii=False)
 
@@ -1401,7 +1471,7 @@ async def main_async(args: argparse.Namespace) -> int:
         or "claude-haiku-4-5-20251001"
     )
     judge_model = (
-        args.judge_model
+        getattr(args, "judge_model", None)
         or os.getenv("JUDGE_MODEL")
         or defaults.get("judge_model")
         or "claude-sonnet-4-6"
@@ -1436,6 +1506,15 @@ async def main_async(args: argparse.Namespace) -> int:
     elif sut_backend == "openai":
         sut_options["api_key"] = getattr(args, "sut_api_key", None) or os.getenv("OPENAI_API_KEY") or defaults.get("sut_api_key")
     judge_backend = (getattr(args, "judge", None) or defaults.get("judge") or "anthropic").strip().lower()
+    if judge_backend == "openai":
+        judge_model = (
+            getattr(args, "judge_model", None)
+            or os.getenv("JUDGE_MODEL_OPENAI")
+            or defaults.get("judge_model_openai")
+            or os.getenv("JUDGE_MODEL")
+            or defaults.get("judge_model")
+            or "gpt-4o-mini"
+        )
     run_timeout = getattr(args, "run_timeout", None)
     log_path = None
     if getattr(args, "log", None):
@@ -1445,6 +1524,7 @@ async def main_async(args: argparse.Namespace) -> int:
     if getattr(args, "history", None) or os.getenv("HISTORY_FILE"):
         history_path = Path(args.history or os.getenv("HISTORY_FILE", ""))
     notify_webhook = getattr(args, "notify_webhook", None) or os.getenv("NOTIFY_WEBHOOK") or None
+    notify_format = getattr(args, "notify_format", None) or os.getenv("NOTIFY_FORMAT") or None
     try:
         import rate_limit
         rate_limit.set_max_per_minute(getattr(args, "max_requests_per_minute", None))
@@ -1568,20 +1648,20 @@ async def main_async(args: argparse.Namespace) -> int:
         if fail_under is not None:
             for item in summary:
                 if "error" in item:
-                    _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
+                    _notify_failure(notify_webhook, "Safety tester failed (run error).", summary, notify_format)
                     return 1
                 s = item.get("score")
                 if s is not None and int(s) < fail_under:
-                    _notify_failure(notify_webhook, f"Safety tester failed: score {s} below --fail-under {fail_under}.", summary)
+                    _notify_failure(notify_webhook, f"Safety tester failed: score {s} below --fail-under {fail_under}.", summary, notify_format)
                     return 1
         if fail_under_criteria:
             for item in summary:
                 if "error" in item:
-                    _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
+                    _notify_failure(notify_webhook, "Safety tester failed (run error).", summary, notify_format)
                     return 1
                 for cid, min_score in (fail_under_criteria or {}).items():
                     if (item.get("criterion_scores") or {}).get(cid, 0) < min_score:
-                        _notify_failure(notify_webhook, f"Safety tester failed: criterion {cid} below threshold.", summary)
+                        _notify_failure(notify_webhook, f"Safety tester failed: criterion {cid} below threshold.", summary, notify_format)
                         return 1
         _maybe_save_baseline_and_notify_success(args, output_dir, summary, notify_webhook, quiet)
         return 0
@@ -1752,25 +1832,25 @@ async def main_async(args: argparse.Namespace) -> int:
         if fail_under is not None:
             for item in summary:
                 if "error" in item:
-                    _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
+                    _notify_failure(notify_webhook, "Safety tester failed (run error).", summary, notify_format)
                     return 1
                 s = item.get("score")
                 if s is not None and int(s) < fail_under:
                     if not quiet:
                         console.print(f"[bold red]Score {s} below --fail-under {fail_under}[/bold red]")
-                    _notify_failure(notify_webhook, f"Safety tester failed: score {s} below --fail-under {fail_under}.", summary)
+                    _notify_failure(notify_webhook, f"Safety tester failed: score {s} below --fail-under {fail_under}.", summary, notify_format)
                     return 1
         if fail_under_criteria:
             for item in summary:
                 if "error" in item:
-                    _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
+                    _notify_failure(notify_webhook, "Safety tester failed (run error).", summary, notify_format)
                     return 1
                 scores = item.get("criterion_scores") or {}
                 for cid, min_score in fail_under_criteria.items():
                     if scores.get(cid, 0) < min_score:
                         if not quiet:
                             console.print(f"[bold red]Criterion {cid} score {scores.get(cid, 0)} below --fail-under-criteria {cid}={min_score}[/bold red]")
-                        _notify_failure(notify_webhook, f"Safety tester failed: criterion {cid} below threshold.", summary)
+                        _notify_failure(notify_webhook, f"Safety tester failed: criterion {cid} below threshold.", summary, notify_format)
                         return 1
         if compare_baseline:
             for item in summary:
@@ -1784,7 +1864,7 @@ async def main_async(args: argparse.Namespace) -> int:
                     baseline_path = output_dir / f"baseline_{pname}.json"
                 baseline_scores = _load_baseline(baseline_path)
                 if baseline_scores and not _check_baseline(pname, item.get("criterion_scores") or {}, baseline_scores, quiet):
-                    _notify_failure(notify_webhook, "Safety tester failed: regression vs baseline.", summary)
+                    _notify_failure(notify_webhook, "Safety tester failed: regression vs baseline.", summary, notify_format)
                     return 1
         _maybe_save_baseline_and_notify_success(args, output_dir, summary, notify_webhook, quiet)
         return 0
@@ -1923,30 +2003,30 @@ async def main_async(args: argparse.Namespace) -> int:
     if fail_under is not None:
         for item in summary:
             if "error" in item:
-                _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
+                _notify_failure(notify_webhook, "Safety tester failed (run error).", summary, notify_format)
                 return 1
             s = item.get("score")
             if s is not None and int(s) < fail_under:
                 if not quiet:
                     console.print(f"[bold red]Score {s} below --fail-under {fail_under}[/bold red]")
-                _notify_failure(notify_webhook, f"Safety tester failed: score {s} below --fail-under {fail_under}.", summary)
+                _notify_failure(notify_webhook, f"Safety tester failed: score {s} below --fail-under {fail_under}.", summary, notify_format)
                 return 1
     if fail_under_criteria:
         for item in summary:
             if "error" in item:
-                _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
+                _notify_failure(notify_webhook, "Safety tester failed (run error).", summary, notify_format)
                 return 1
             scores = item.get("criterion_scores") or {}
             for cid, min_score in fail_under_criteria.items():
                 if scores.get(cid, 0) < min_score:
                     if not quiet:
                         console.print(f"[bold red]Criterion {cid} score {scores.get(cid, 0)} below threshold {min_score}[/bold red]")
-                    _notify_failure(notify_webhook, f"Safety tester failed: criterion {cid} below threshold.", summary)
+                    _notify_failure(notify_webhook, f"Safety tester failed: criterion {cid} below threshold.", summary, notify_format)
                     return 1
     if compare_baseline:
         for item in summary:
             if "error" in item:
-                _notify_failure(notify_webhook, "Safety tester failed (run error).", summary)
+                _notify_failure(notify_webhook, "Safety tester failed (run error).", summary, notify_format)
                 return 1
             pname = item.get("persona_name", "")
             if baseline_path_or_dir:
@@ -1956,7 +2036,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 baseline_path = output_dir / f"baseline_{pname}.json"
             baseline_scores = _load_baseline(baseline_path)
             if baseline_scores and not _check_baseline(pname, item.get("criterion_scores") or {}, baseline_scores, quiet):
-                _notify_failure(notify_webhook, "Safety tester failed: regression vs baseline.", summary)
+                _notify_failure(notify_webhook, "Safety tester failed: regression vs baseline.", summary, notify_format)
                 return 1
     _maybe_save_baseline_and_notify_success(args, output_dir, summary, notify_webhook, quiet)
     return 0
