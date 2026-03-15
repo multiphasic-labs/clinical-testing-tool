@@ -83,6 +83,10 @@ def test_mock_run_single_persona_quiet() -> None:
         no_color=False,
         shard=None,
         junit=None,
+        failures_only=False,
+        judge_temperature=None,
+        report_only=None,
+        cache_dir=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -173,6 +177,10 @@ def test_fail_under_exits_1_when_below() -> None:
         no_color=False,
         shard=None,
         junit=None,
+        failures_only=False,
+        judge_temperature=None,
+        report_only=None,
+        cache_dir=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -243,6 +251,10 @@ def test_fail_under_exits_0_when_above() -> None:
         no_color=False,
         shard=None,
         junit=None,
+        failures_only=False,
+        judge_temperature=None,
+        report_only=None,
+        cache_dir=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -313,6 +325,10 @@ def test_dry_run_exits_0_and_prints_plan() -> None:
         no_color=False,
         shard=None,
         junit=None,
+        failures_only=False,
+        judge_temperature=None,
+        report_only=None,
+        cache_dir=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -406,6 +422,10 @@ def test_history_append_writes_one_line() -> None:
             no_color=False,
             shard=None,
             junit=None,
+            failures_only=False,
+            judge_temperature=None,
+            report_only=None,
+            cache_dir=None,
         )
         with redirect_stdout(StringIO()):
             asyncio.run(main.main_async(args))
@@ -537,6 +557,10 @@ def test_result_json_has_schema_version() -> None:
             no_color=False,
             shard=None,
             junit=None,
+            failures_only=False,
+            judge_temperature=None,
+            report_only=None,
+            cache_dir=None,
         )
         with redirect_stdout(StringIO()):
             asyncio.run(main.main_async(args))

@@ -117,7 +117,13 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
 - **Schema version**: Result and batch/audit JSON files include `"schema_version": "1"` for compatibility.
 - **Branded report**: `--branded-report PATH` writes a single HTML report; use `--report-branding-title "Run by Acme"` for stakeholder hand-off.
 - **Methodology**: See [docs/METHODOLOGY.md](docs/METHODOLOGY.md) for “What we test” (personas, criteria, judge, limitations) for sales and compliance.
-- **Persona schema**: See [docs/PERSONA_SCHEMA.md](docs/PERSONA_SCHEMA.md) for required/optional fields and the optional `meta` object.
+  - **Persona schema**: See [docs/PERSONA_SCHEMA.md](docs/PERSONA_SCHEMA.md) for required/optional fields and the optional `meta` object.
+  - **Batch stats and failures**: With batch runs, pass rate and min/max/mean score are printed; use `--failures-only` to print only failed runs and stats.
+  - **Judge temperature**: `--judge-temperature` (or config `judge_temperature`) for more consistent scores (default 0).
+  - **Re-score only**: `--report-only PATH` re-runs the judge on existing result JSON(s) without calling the SUT.
+  - **SUT cache**: `--cache-dir PATH` (or `CACHE_DIR`) caches SUT responses by (persona + prompt) hash for faster re-runs.
+  - **CLI reference**: [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md) lists every flag in one place.
+  - **Troubleshooting**: See [docs/RUNBOOK.md](docs/RUNBOOK.md) for "Inconsistent judge scores" and other tips.
 - **Mock mode**:
   - Optional offline / no-API mode for CI and quick experimentation.
 

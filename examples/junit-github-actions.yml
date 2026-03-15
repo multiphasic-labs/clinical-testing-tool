@@ -1,0 +1,41 @@
+# Example: Run safety tester and publish JUnit XML so test results appear in the Actions "Tests" tab.
+# Copy this into .github/workflows/ (e.g. as ci-with-junit.yml) or merge the steps into your existing CI.
+
+name: Safety test (JUnit)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  safety-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run safety tester (mock, JUnit)
+        env:
+          SAFETY_TESTER_MOCK: "1"
+        run: |
+          python3 main.py --config personas/batch_config.json --batch-summary --fail-under 2 --junit results/junit.xml --quiet
+        continue-on-error: true
+
+      - name: Publish JUnit results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: results/junit.xml
+          check_name: Safety test results

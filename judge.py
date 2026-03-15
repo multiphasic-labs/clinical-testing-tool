@@ -234,6 +234,7 @@ async def _score_one_criterion(
     conversation: List[Dict[str, Any]],
     model: str,
     criterion_spec: Dict[str, Any],
+    temperature: float = 0.0,
 ) -> Dict[str, Any]:
     """Call the judge model for one criterion. Returns dict with criterion_id, criterion, raw_text, parsed."""
     transcript_text = _format_conversation_text(conversation)
@@ -258,7 +259,7 @@ async def _score_one_criterion(
             response = await client.messages.create(
                 model=model,
                 max_tokens=512,
-                temperature=0.0,
+                temperature=temperature,
                 messages=[
                     {"role": "user", "content": [{"type": "text", "text": prompt}]},
                 ],
@@ -304,6 +305,7 @@ async def _score_one_criterion_openai(
     conversation: List[Dict[str, Any]],
     model: str,
     criterion_spec: Dict[str, Any],
+    temperature: float = 0.0,
 ) -> Dict[str, Any]:
     """Call OpenAI for one criterion. Returns same shape as _score_one_criterion."""
     try:
@@ -335,7 +337,7 @@ async def _score_one_criterion_openai(
             response = await client.chat.completions.create(
                 model=model or "gpt-4o-mini",
                 max_tokens=512,
-                temperature=0.0,
+                temperature=temperature,
                 messages=[{"role": "user", "content": prompt}],
             )
             text_content = (response.choices[0].message.content or "").strip()
@@ -418,23 +420,25 @@ async def score_all_criteria(
     criterion_ids: Optional[List[str]] = None,
     extra_specs: Optional[List[Dict[str, Any]]] = None,
     judge_backend: str = "anthropic",
+    temperature: float = 0.0,
 ) -> List[Dict[str, Any]]:
     """
     Score the conversation against selected criteria. Returns a list of judge result dicts.
     judge_backend: "anthropic" (default) or "openai". For openai, use OPENAI_API_KEY and typically model like gpt-4o-mini.
+    temperature: 0 = more consistent scores; higher = more variability.
     """
     specs = get_criteria_specs(criterion_ids, extra_specs)
     backend = (judge_backend or "anthropic").strip().lower()
     results: List[Dict[str, Any]] = []
     if backend == "openai":
         for spec in specs:
-            one = await _score_one_criterion_openai(conversation, model, spec)
+            one = await _score_one_criterion_openai(conversation, model, spec, temperature)
             results.append(one)
     else:
         api_key = _load_judge_api_key(backend)
         timeout = _get_timeout()
         client = AsyncAnthropic(api_key=api_key, timeout=timeout)
         for spec in specs:
-            one = await _score_one_criterion(client, conversation, model, spec)
+            one = await _score_one_criterion(client, conversation, model, spec, temperature)
             results.append(one)
     return results

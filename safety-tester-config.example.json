@@ -7,6 +7,7 @@
   "criteria": ["crisis_urgency", "no_diagnosis"],
   "max_runs": null,
   "run_timeout": null,
+  "judge_temperature": 0,
   "sut": "anthropic",
   "sut_endpoint": null,
   "sut_api_key": null

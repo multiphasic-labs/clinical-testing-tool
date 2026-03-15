@@ -361,6 +361,32 @@ def parse_args() -> argparse.Namespace:
         metavar="PATH",
         help="Write JUnit-style XML report to PATH (for CI). Used with batch runs; one testcase per persona.",
     )
+    parser.add_argument(
+        "--failures-only",
+        action="store_true",
+        help="With batch runs: print only failed runs and stats (no full table).",
+    )
+    parser.add_argument(
+        "--judge-temperature",
+        type=float,
+        default=None,
+        metavar="F",
+        help="Judge model temperature (0–1). Lower = more consistent scores. Default: 0. Config: judge_temperature.",
+    )
+    parser.add_argument(
+        "--report-only",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Re-score existing result JSON(s) without calling SUT. PATH = file or directory of result JSONs.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Cache SUT responses by (persona + prompt) hash. Re-use for re-judging or parallel runs. Env: CACHE_DIR.",
+    )
     return parser.parse_args()
 
 
@@ -816,26 +842,59 @@ async def run_single_persona(
     history_path: Optional[Path] = None,
     run_id: Optional[str] = None,
     judge_backend: str = "anthropic",
+    judge_temperature: float = 0.0,
+    cache_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     persona_path = resolve_persona_path(persona_name)
 
     if mock:
         conversation = _mock_conversation(persona_name)
     else:
-        try:
-            conversation = await run_conversation(
-                persona_path,
-                model=sut_model,
-                system_prompt=system_prompt,
-                sut_backend=sut_backend,
-                sut_options=sut_options,
-            )
-        except ConversationError as e:
-            console.print(f"[bold red]Conversation error for persona '{persona_name}':[/bold red] {e}")
-            _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{persona_name}\terror=ConversationError\t{e}")
-            if history_path:
-                _append_history(history_path, {"timestamp_utc": datetime.utcnow().strftime("%Y%m%dT%H%M%SZ"), "persona_name": persona_name, "error": str(e)})
-            return {"persona_name": persona_name, "error": str(e)}
+        cache_hit = False
+        if cache_dir and cache_dir.is_dir():
+            import hashlib
+            key = hashlib.sha256((str(persona_path.resolve()) + (system_prompt or "")).encode()).hexdigest()[:24]
+            cache_file = cache_dir / f"{key}.json"
+            if cache_file.is_file():
+                try:
+                    cached = json.loads(cache_file.read_text(encoding="utf-8"))
+                    conv_judge = cached.get("conversation_for_judge")
+                    if isinstance(conv_judge, list):
+                        conversation = {
+                            "persona_name": persona_path.stem,
+                            "turns": [],
+                            "conversation_for_judge": conv_judge,
+                        }
+                        cache_hit = True
+                except (json.JSONDecodeError, OSError):
+                    pass
+        if not cache_hit:
+            try:
+                conversation = await run_conversation(
+                    persona_path,
+                    model=sut_model,
+                    system_prompt=system_prompt,
+                    sut_backend=sut_backend,
+                    sut_options=sut_options,
+                )
+                if cache_dir and cache_dir.is_dir():
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    import hashlib
+                    key = hashlib.sha256((str(persona_path.resolve()) + (system_prompt or "")).encode()).hexdigest()[:24]
+                    cache_file = cache_dir / f"{key}.json"
+                    try:
+                        cache_file.write_text(
+                            json.dumps({"conversation_for_judge": conversation["conversation_for_judge"]}, indent=2),
+                            encoding="utf-8",
+                        )
+                    except OSError:
+                        pass
+            except ConversationError as e:
+                console.print(f"[bold red]Conversation error for persona '{persona_name}':[/bold red] {e}")
+                _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{persona_name}\terror=ConversationError\t{e}")
+                if history_path:
+                    _append_history(history_path, {"timestamp_utc": datetime.utcnow().strftime("%Y%m%dT%H%M%SZ"), "persona_name": persona_name, "error": str(e)})
+                return {"persona_name": persona_name, "error": str(e)}
 
     if not quiet:
         console.rule(f"[bold cyan]Persona: {conversation.get('persona_name', persona_name)}[/bold cyan]")
@@ -851,6 +910,7 @@ async def run_single_persona(
                 criterion_ids=criterion_ids,
                 extra_specs=extra_criterion_specs,
                 judge_backend=judge_backend,
+                temperature=judge_temperature,
             )
         except Exception as e:
             console.print(f"[bold red]Judge error for persona '{persona_name}':[/bold red] {e}")
@@ -1078,6 +1138,8 @@ async def _run_one(
     run_timeout: Optional[int] = None,
     on_complete_msg: Optional[str] = None,
     judge_backend: str = "anthropic",
+    judge_temperature: float = 0.0,
+    cache_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run a single persona (optionally under a semaphore for parallel batch)."""
     async def _do() -> Dict[str, Any]:
@@ -1087,6 +1149,8 @@ async def _run_one(
             sut_model=sut_model,
             judge_model=judge_model,
             mock=mock,
+            judge_temperature=judge_temperature,
+            cache_dir=cache_dir,
             output_dir=output_dir,
             quiet=quiet,
             write_md=write_md,
@@ -1628,6 +1692,12 @@ async def main_async(args: argparse.Namespace) -> int:
             or "gpt-4o-mini"
         )
     run_timeout = getattr(args, "run_timeout", None) or defaults.get("run_timeout")
+    judge_temperature = getattr(args, "judge_temperature", None)
+    if judge_temperature is None:
+        judge_temperature = float(defaults.get("judge_temperature", 0.0))
+    cache_dir: Optional[Path] = None
+    if getattr(args, "cache_dir", None) or os.getenv("CACHE_DIR"):
+        cache_dir = Path(args.cache_dir or os.getenv("CACHE_DIR", ""))
     log_path = None
     if getattr(args, "log", None):
         log_path = Path(args.log)
@@ -1688,6 +1758,59 @@ async def main_async(args: argparse.Namespace) -> int:
         console.print(f"[bold red]{e}[/bold red]")
         return 1
 
+    # --report-only: re-score existing result JSON(s) without calling SUT
+    if getattr(args, "report_only", None):
+        report_path = Path(args.report_only)
+        if report_path.is_file():
+            result_files = [report_path]
+        elif report_path.is_dir():
+            result_files = sorted(
+                f for f in report_path.glob("*.json")
+                if f.name.startswith("2") and "batch_summary" not in f.name and "batch_audit" not in f.name and "baseline" not in f.name
+            )
+        else:
+            console.print(f"[bold red]--report-only path not found: {report_path}[/bold red]")
+            return 1
+        if not result_files:
+            console.print("[bold red]No result JSON files found for --report-only.[/bold red]")
+            return 1
+        for res_path in result_files:
+            try:
+                data = json.loads(res_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as e:
+                console.print(f"[bold red]Failed to load {res_path}: {e}[/bold red]")
+                return 1
+            conv = (data.get("conversation") or {}).get("conversation_for_judge")
+            if not conv:
+                console.print(f"[yellow]Skipping {res_path.name}: no conversation_for_judge.[/yellow]")
+                continue
+            if mock:
+                judge_results = _mock_judge_all(criterion_ids=criterion_ids, extra_specs=extra_criterion_specs)
+            else:
+                try:
+                    judge_results = await score_all_criteria(
+                        conv,
+                        model=judge_model,
+                        criterion_ids=criterion_ids,
+                        extra_specs=extra_criterion_specs,
+                        judge_backend=judge_backend,
+                        temperature=judge_temperature,
+                    )
+                except Exception as e:
+                    console.print(f"[bold red]Judge error for {res_path.name}: {e}[/bold red]")
+                    return 1
+            criterion_scores = {r.get("criterion_id", f"c{i}"): r.get("parsed", {}).get("score", 0) for i, r in enumerate(judge_results)}
+            data["judge_results"] = [
+                {"criterion_id": r.get("criterion_id"), "criterion": r.get("criterion"), "raw_text": r.get("raw_text"), "parsed": r.get("parsed")}
+                for r in judge_results
+            ]
+            data["criterion_scores"] = criterion_scores
+            data["final_score"] = min(criterion_scores.values()) if criterion_scores else 0
+            res_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            if not quiet:
+                console.print(f"[green]Re-scored: {res_path.name} (score={data['final_score']})[/green]")
+        return 0
+
     # --retry-failed: re-run only failed runs from a batch summary
     if getattr(args, "retry_failed", False):
         retry_from = getattr(args, "retry_failed_from", None)
@@ -1727,6 +1850,8 @@ async def main_async(args: argparse.Namespace) -> int:
                     run_id=run_id,
                     run_timeout=run_timeout,
                     judge_backend=judge_backend,
+                    judge_temperature=judge_temperature,
+                    cache_dir=cache_dir,
                 )
             )
         summary = await _gather_with_progress(tasks, quiet)
@@ -1742,22 +1867,29 @@ async def main_async(args: argparse.Namespace) -> int:
             )
         if getattr(args, "junit", None):
             _write_junit(Path(args.junit), summary, getattr(args, "fail_under", None))
+        fail_under = getattr(args, "fail_under", None)
         if not quiet:
-            table = Table(title="Retry Summary", box=box.SIMPLE_HEAVY, show_lines=True)
-            table.add_column("Persona", style="cyan")
-            table.add_column("Score", style="white")
-            table.add_column("Result File", style="green")
-            table.add_column("Error", style="red")
-            for item in summary:
-                p = item.get("persona_name", "")
-                err = item.get("error")
-                if err:
-                    table.add_row(p, "-", "-", err)
-                else:
-                    s = item.get("score")
-                    table.add_row(p, str(s) if s is not None else "?", item.get("result_path", ""), "")
-            console.print()
-            console.print(table)
+            if getattr(args, "failures_only", False):
+                _print_failed_runs(summary, fail_under)
+                _print_batch_stats(summary, fail_under)
+            else:
+                table = Table(title="Retry Summary", box=box.SIMPLE_HEAVY, show_lines=True)
+                table.add_column("Persona", style="cyan")
+                table.add_column("Score", style="white")
+                table.add_column("Result File", style="green")
+                table.add_column("Error", style="red")
+                for item in summary:
+                    p = item.get("persona_name", "")
+                    err = item.get("error")
+                    if err:
+                        table.add_row(p, "-", "-", err)
+                    else:
+                        s = item.get("score")
+                        table.add_row(p, str(s) if s is not None else "?", item.get("result_path", ""), "")
+                console.print()
+                console.print(table)
+                _print_batch_stats(summary, fail_under)
+                _print_failed_runs(summary, fail_under)
         fail_under = getattr(args, "fail_under", None)
         if fail_under is not None:
             for item in summary:
@@ -1884,6 +2016,8 @@ async def main_async(args: argparse.Namespace) -> int:
                             run_timeout=run_timeout,
                             on_complete_msg=progress_msg(persona_name),
                             judge_backend=judge_backend,
+                            judge_temperature=judge_temperature,
+                            cache_dir=cache_dir,
                         )
                     )
             else:
@@ -1911,6 +2045,8 @@ async def main_async(args: argparse.Namespace) -> int:
                         run_timeout=run_timeout,
                         on_complete_msg=progress_msg(persona_name),
                         judge_backend=judge_backend,
+                        judge_temperature=judge_temperature,
+                        cache_dir=cache_dir,
                     )
                 )
         if tasks:
@@ -1931,32 +2067,36 @@ async def main_async(args: argparse.Namespace) -> int:
         if getattr(args, "junit", None):
             _write_junit(Path(args.junit), summary, getattr(args, "fail_under", None))
 
-        if not quiet:
-            table = Table(
-                title="Batch Run Summary",
-                box=box.SIMPLE_HEAVY,
-                show_lines=True,
-            )
-            table.add_column("Persona", style="cyan")
-            table.add_column("Score", style="white")
-            table.add_column("Result File", style="green")
-            table.add_column("Error", style="red")
-
-            for item in summary:
-                persona_name = item.get("persona_name", "")
-                error = item.get("error")
-                if error:
-                    table.add_row(persona_name, "-", "-", error)
-                else:
-                    score = item.get("score")
-                    score_text = _style_score(int(score)) if score is not None else Text("?", style="yellow")
-                    result_path = item.get("result_path", "")
-                    table.add_row(persona_name, str(score_text), result_path, "")
-
-            console.print()
-            console.print(table)
-            if len(summary) > 1:
-                _print_tag_summary(summary, tags_dir, getattr(args, "fail_under", None))
+        fail_under_cfg = getattr(args, "fail_under", None)
+        if not quiet and len(summary) > 1:
+            if getattr(args, "failures_only", False):
+                _print_failed_runs(summary, fail_under_cfg)
+                _print_batch_stats(summary, fail_under_cfg)
+            else:
+                table = Table(
+                    title="Batch Run Summary",
+                    box=box.SIMPLE_HEAVY,
+                    show_lines=True,
+                )
+                table.add_column("Persona", style="cyan")
+                table.add_column("Score", style="white")
+                table.add_column("Result File", style="green")
+                table.add_column("Error", style="red")
+                for item in summary:
+                    persona_name = item.get("persona_name", "")
+                    error = item.get("error")
+                    if error:
+                        table.add_row(persona_name, "-", "-", error)
+                    else:
+                        score = item.get("score")
+                        score_text = _style_score(int(score)) if score is not None else Text("?", style="yellow")
+                        result_path = item.get("result_path", "")
+                        table.add_row(persona_name, str(score_text), result_path, "")
+                console.print()
+                console.print(table)
+                _print_batch_stats(summary, fail_under_cfg)
+                _print_failed_runs(summary, fail_under_cfg)
+                _print_tag_summary(summary, tags_dir, fail_under_cfg)
 
         if prompts_list and len(summary) > 0 and not quiet:
             _print_prompt_comparison_table(summary, prompts_list)
@@ -2078,6 +2218,8 @@ async def main_async(args: argparse.Namespace) -> int:
                         run_timeout=run_timeout,
                         on_complete_msg=progress_msg(persona_name),
                         judge_backend=judge_backend,
+                        judge_temperature=judge_temperature,
+                        cache_dir=cache_dir,
                     )
                 )
         else:
@@ -2105,6 +2247,8 @@ async def main_async(args: argparse.Namespace) -> int:
                     run_timeout=run_timeout,
                     on_complete_msg=progress_msg(persona_name),
                     judge_backend=judge_backend,
+                    judge_temperature=judge_temperature,
+                    cache_dir=cache_dir,
                 )
             )
     summary = await _gather_with_progress(tasks, quiet) if tasks else []
@@ -2122,29 +2266,35 @@ async def main_async(args: argparse.Namespace) -> int:
     if getattr(args, "junit", None) and summary:
         _write_junit(Path(args.junit), summary, getattr(args, "fail_under", None))
 
+    fail_under = getattr(args, "fail_under", None)
     if not quiet and len(summary) > 1:
-        table = Table(
-            title="Batch Run Summary",
-            box=box.SIMPLE_HEAVY,
-            show_lines=True,
-        )
-        table.add_column("Persona", style="cyan")
-        table.add_column("Score", style="white")
-        table.add_column("Result File", style="green")
-        table.add_column("Error", style="red")
-        for item in summary:
-            persona_name = item.get("persona_name", "")
-            error = item.get("error")
-            if error:
-                table.add_row(persona_name, "-", "-", error)
-            else:
-                score = item.get("score")
-                score_text = _style_score(int(score)) if score is not None else Text("?", style="yellow")
-                table.add_row(persona_name, str(score_text), item.get("result_path", ""), "")
-        console.print()
-        console.print(table)
-        if len(summary) > 1:
-            _print_tag_summary(summary, tags_dir, getattr(args, "fail_under", None))
+        if getattr(args, "failures_only", False):
+            _print_failed_runs(summary, fail_under)
+            _print_batch_stats(summary, fail_under)
+        else:
+            table = Table(
+                title="Batch Run Summary",
+                box=box.SIMPLE_HEAVY,
+                show_lines=True,
+            )
+            table.add_column("Persona", style="cyan")
+            table.add_column("Score", style="white")
+            table.add_column("Result File", style="green")
+            table.add_column("Error", style="red")
+            for item in summary:
+                persona_name = item.get("persona_name", "")
+                error = item.get("error")
+                if error:
+                    table.add_row(persona_name, "-", "-", error)
+                else:
+                    score = item.get("score")
+                    score_text = _style_score(int(score)) if score is not None else Text("?", style="yellow")
+                    table.add_row(persona_name, str(score_text), item.get("result_path", ""), "")
+            console.print()
+            console.print(table)
+            _print_batch_stats(summary, fail_under)
+            _print_failed_runs(summary, fail_under)
+            _print_tag_summary(summary, tags_dir, fail_under)
 
     if prompts_list and len(summary) > 0 and not quiet:
         _print_prompt_comparison_table(summary, prompts_list)
@@ -2298,6 +2448,46 @@ def _print_tag_summary(
         failed = len(items) - passed
         table.add_row(tag, str(passed), str(failed), str(len(items)))
     console.print(table)
+
+
+def _print_batch_stats(summary: List[Dict[str, Any]], fail_under: Optional[int]) -> None:
+    """Print pass rate and min/max/mean score for batch summary."""
+    if not summary:
+        return
+    scores = [int(item["score"]) for item in summary if item.get("score") is not None and item.get("error") is None]
+    passed = sum(
+        1
+        for item in summary
+        if not item.get("error")
+        and (fail_under is None or (item.get("score") is not None and int(item["score"]) >= fail_under))
+    )
+    total = len(summary)
+    console.print()
+    console.print(f"[bold]Batch stats:[/bold] {passed}/{total} passed" + (f" (fail-under {fail_under})" if fail_under is not None else ""))
+    if scores:
+        console.print(f"  Score — min: {min(scores)}, max: {max(scores)}, mean: {sum(scores) / len(scores):.2f}")
+    errors = sum(1 for item in summary if item.get("error"))
+    if errors:
+        console.print(f"  Errors: {errors}")
+
+
+def _print_failed_runs(summary: List[Dict[str, Any]], fail_under: Optional[int]) -> None:
+    """Print only failed runs (error or score below fail_under) with reason."""
+    failed = []
+    for item in summary:
+        err = item.get("error")
+        if err:
+            failed.append((item.get("persona_name", "?"), f"error: {err}"))
+            continue
+        score = item.get("score")
+        if fail_under is not None and score is not None and int(score) < fail_under:
+            failed.append((item.get("persona_name", "?"), f"score {score} below {fail_under}"))
+    if not failed:
+        return
+    console.print()
+    console.print("[bold red]Failed runs[/bold red]")
+    for name, reason in failed:
+        console.print(f"  • {name}: {reason}")
 
 
 def _print_dry_run(

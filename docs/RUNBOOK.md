@@ -81,3 +81,19 @@ python3 main.py --persona passive_ideation.json --live
 | No color (CI/logs)      | `python3 main.py ... --no-color` |
 | Shard batch (e.g. 4 runners) | `python3 main.py --config ... --shard 0/4` (and 1/4, 2/4, 3/4 in parallel) |
 | JUnit XML for CI           | `python3 main.py --config ... --batch-summary --junit report.xml` |
+| Failures only (batch)      | `python3 main.py ... --failures-only` |
+| Re-score existing results | `python3 main.py --report-only results/ --live` |
+| Cache SUT responses       | `python3 main.py ... --cache-dir .sut_cache` (or `CACHE_DIR`) |
+
+---
+
+## Troubleshooting
+
+### Inconsistent judge scores
+
+Scores can vary slightly between runs because the judge model is non-deterministic. To reduce variability:
+
+- Use **`--judge-temperature 0`** (default) or set `judge_temperature: 0` in `safety-tester-config.json` for more stable scores.
+- Run the same persona **twice** and compare; small differences (e.g. 1 vs 2 on a borderline case) are common.
+- Use **`--compare-baseline`** and **`--save-baseline`** to track regressions rather than absolute scores.
+- For **re-scoring** without re-running the SUT, use **`--report-only results/`** so only the judge is re-run (e.g. after adding a new criterion).
