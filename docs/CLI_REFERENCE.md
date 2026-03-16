@@ -68,6 +68,15 @@ One-line reference for all flags. See `python3 main.py --help` and the [README](
 | `--ndjson` | Print one JSON object per run to stdout (for jq). |
 | `--redact` | Redact conversation content in saved result JSON. |
 | `--criterion-weights` | Weight criteria for final score (e.g. crisis_urgency=2,no_diagnosis=1). |
+| `--baseline` | Path or `last` for --compare-baseline (use latest batch summary). |
+| `--persona-difficulty` | Only run personas with meta.difficulty matching (easy/medium/hard). |
+| `--config-profile` | With --config: use named profile's personas (profiles.NAME.personas). |
+| `--repeat` | Run each persona N times; report score distribution (min/max/mean). |
+| `--sut-timeout` | Timeout in seconds for SUT (conversation) phase. |
+| `--judge-timeout` | Timeout in seconds for judge (scoring) phase. |
+| `--log-format` | Log format: text or jsonl (one JSON object per line). |
+| `--preflight` | Validate personas, criteria, and (if --live) API keys; then exit. |
+| `--interactive` | Interactively pick personas from a numbered list before running. |
 
 ## Environment variables
 

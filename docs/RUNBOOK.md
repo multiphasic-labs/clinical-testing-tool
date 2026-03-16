@@ -93,6 +93,20 @@ python3 main.py --persona passive_ideation.json --live
 
 ---
 
+## Troubleshooting table
+
+| Symptom | Likely cause | Fix |
+|--------|----------------|-----|
+| 401 / 403 from API | Missing or invalid API key | Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in `.env`; check key has credits and is not revoked. |
+| Scores vary between runs | Judge is non-deterministic | Use `--judge-temperature 0`; use `--compare-baseline` and `--save-baseline` for regression. |
+| Run times out | SUT or judge slow / overloaded | Increase `--run-timeout`; use `--sut-timeout` / `--judge-timeout` if supported. |
+| No personas match | Wrong dir or tags/difficulty | Check `--personas-dir` and `--persona-tags`; use `--list-personas` and `--list-tags`. |
+| Config must contain 'personas' | Config has no personas list or wrong profile | Add `"personas": ["..."]` to config JSON or use `--config-profile NAME` for a profile. |
+| Preflight: API key not set | Running with `--live` but key missing | Set the required key in `.env` or pass via env; run without `--live` for mock. |
+| Baseline regression | Current score lower than baseline | Review changes to SUT or prompt; adjust baseline with `--save-baseline` after a good run. |
+
+---
+
 ## Troubleshooting
 
 ### Inconsistent judge scores

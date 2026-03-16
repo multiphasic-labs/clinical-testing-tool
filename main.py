@@ -158,7 +158,8 @@ def parse_args() -> argparse.Namespace:
         "--baseline",
         type=str,
         default=None,
-        help="Path to baseline result JSON (or dir). Used with --compare-baseline. Default: output_dir/baseline_<persona>.json",
+        metavar="PATH|last",
+        help="Path to baseline JSON or dir for --compare-baseline. Use 'last' to use the most recent batch summary.",
     )
     parser.add_argument(
         "--list-personas",
@@ -410,6 +411,58 @@ def parse_args() -> argparse.Namespace:
         metavar="CID=W,...",
         help="Weight criteria for final score (e.g. crisis_urgency=2,no_diagnosis=1). Default: min across criteria.",
     )
+    parser.add_argument(
+        "--persona-difficulty",
+        type=str,
+        default=None,
+        choices=["easy", "medium", "hard"],
+        help="Only run personas with meta.difficulty matching this (or no difficulty set).",
+    )
+    parser.add_argument(
+        "--config-profile",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="With --config: use a named profile's personas (config must have 'profiles.NAME.personas').",
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Run each persona N times and report score distribution (min/max/mean). Default: 1.",
+    )
+    parser.add_argument(
+        "--sut-timeout",
+        type=int,
+        default=None,
+        metavar="SEC",
+        help="Timeout in seconds for SUT (conversation) phase. Overrides run-timeout for SUT only.",
+    )
+    parser.add_argument(
+        "--judge-timeout",
+        type=int,
+        default=None,
+        metavar="SEC",
+        help="Timeout in seconds for judge (scoring) phase. Overrides run-timeout for judge only.",
+    )
+    parser.add_argument(
+        "--log-format",
+        type=str,
+        default="text",
+        choices=["text", "jsonl"],
+        help="Format for --log: text (tab-separated) or jsonl (one JSON object per line).",
+    )
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help="Validate personas, criteria, and (if --live) API keys; then exit. No runs.",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Interactively pick personas and/or criteria from a list before running.",
+    )
     return parser.parse_args()
 
 
@@ -514,6 +567,30 @@ def _filter_personas_by_tags(
         tags = tag_map.get(key) or tag_map.get(p) or []
         if any((t or "").lower() in requested for t in tags):
             out.append(p)
+    return out
+
+
+def _filter_personas_by_difficulty(
+    persona_list: List[str],
+    difficulty: Optional[str],
+    base_dir: Path,
+) -> List[str]:
+    """Keep only personas whose meta.difficulty matches (or have no difficulty set)."""
+    if not difficulty:
+        return persona_list
+    diff = difficulty.strip().lower()
+    out = []
+    for p in persona_list:
+        path = base_dir / p if (base_dir / p).is_file() else (base_dir / (p + ".json") if not p.endswith(".json") else base_dir / p)
+        if not path.is_file():
+            path = resolve_persona_path(p)
+        try:
+            meta = load_persona_metadata(path)
+            d = (meta.get("difficulty") or "").strip().lower()
+            if not d or d == diff:
+                out.append(p)
+        except Exception:
+            out.append(p)  # keep if we can't load meta
     return out
 
 
@@ -896,6 +973,9 @@ async def run_single_persona(
     profile: bool = False,
     redact: bool = False,
     criterion_weights: Optional[Dict[str, float]] = None,
+    log_format: str = "text",
+    sut_timeout: Optional[int] = None,
+    judge_timeout: Optional[int] = None,
 ) -> Dict[str, Any]:
     persona_path = resolve_persona_path(persona_name)
     sut_seconds: Optional[float] = None
@@ -929,13 +1009,17 @@ async def run_single_persona(
             try:
                 if profile:
                     _t0 = time.perf_counter()
-                conversation = await run_conversation(
+                conv_coro = run_conversation(
                     persona_path,
                     model=sut_model,
                     system_prompt=system_prompt,
                     sut_backend=sut_backend,
                     sut_options=sut_options,
                 )
+                if sut_timeout and sut_timeout > 0:
+                    conversation = await asyncio.wait_for(conv_coro, timeout=float(sut_timeout))
+                else:
+                    conversation = await conv_coro
                 if profile:
                     sut_seconds = time.perf_counter() - _t0
                 if cache_dir and cache_dir.is_dir():
@@ -950,9 +1034,18 @@ async def run_single_persona(
                         )
                     except OSError:
                         pass
+            except asyncio.TimeoutError:
+                if log_format == "jsonl":
+                    _log_line(log_path, {"timestamp_utc": datetime.utcnow().isoformat() + "Z", "persona_name": persona_name, "error": "SUTTimeout"}, log_format)
+                else:
+                    _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{persona_name}\terror=SUTTimeout", log_format)
+                return {"persona_name": persona_name, "error": f"SUT timed out after {sut_timeout}s"}
             except ConversationError as e:
                 console.print(f"[bold red]Conversation error for persona '{persona_name}':[/bold red] {e}")
-                _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{persona_name}\terror=ConversationError\t{e}")
+                if log_format == "jsonl":
+                    _log_line(log_path, {"timestamp_utc": datetime.utcnow().isoformat() + "Z", "persona_name": persona_name, "error": "ConversationError", "message": str(e)}, log_format)
+                else:
+                    _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{persona_name}\terror=ConversationError\t{e}", log_format)
                 if history_path:
                     _append_history(history_path, {"timestamp_utc": datetime.utcnow().strftime("%Y%m%dT%H%M%SZ"), "persona_name": persona_name, "error": str(e)})
                 return {"persona_name": persona_name, "error": str(e)}
@@ -971,7 +1064,7 @@ async def run_single_persona(
         try:
             if profile:
                 _t0 = time.perf_counter()
-            judge_results = await score_all_criteria(
+            judge_coro = score_all_criteria(
                 conversation["conversation_for_judge"],
                 model=judge_model,
                 criterion_ids=criterion_ids,
@@ -979,12 +1072,27 @@ async def run_single_persona(
                 judge_backend=judge_backend,
                 temperature=judge_temperature,
             )
+            if judge_timeout and judge_timeout > 0:
+                judge_results = await asyncio.wait_for(judge_coro, timeout=float(judge_timeout))
+            else:
+                judge_results = await judge_coro
             if profile:
                 judge_seconds = time.perf_counter() - _t0
+        except asyncio.TimeoutError:
+            pname = conversation.get("persona_name", persona_name)
+            console.print(f"[bold red]Judge timed out for persona '{pname}'.[/bold red]")
+            if log_format == "jsonl":
+                _log_line(log_path, {"timestamp_utc": datetime.utcnow().isoformat() + "Z", "persona_name": pname, "error": "JudgeTimeout"}, log_format)
+            else:
+                _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{pname}\terror=JudgeTimeout", log_format)
+            return {"persona_name": pname, "error": "Judge timed out"}
         except Exception as e:
             console.print(f"[bold red]Judge error for persona '{persona_name}':[/bold red] {e}")
             pname = conversation.get("persona_name", persona_name)
-            _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{pname}\terror=JudgeError\t{e}")
+            if log_format == "jsonl":
+                _log_line(log_path, {"timestamp_utc": datetime.utcnow().isoformat() + "Z", "persona_name": pname, "error": "JudgeError", "message": str(e)}, log_format)
+            else:
+                _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{pname}\terror=JudgeError\t{e}", log_format)
             if history_path:
                 _append_history(history_path, {"timestamp_utc": datetime.utcnow().strftime("%Y%m%dT%H%M%SZ"), "persona_name": pname, "error": str(e)})
             return {"persona_name": pname, "error": str(e)}
@@ -1051,10 +1159,10 @@ async def run_single_persona(
     else:
         final_score = min(criterion_scores.values()) if criterion_scores else 0
 
-    _log_line(
-        log_path,
-        f"{datetime.utcnow().isoformat()}Z\t{persona_display}\tscore={final_score}\tcriterion_scores={json.dumps(criterion_scores)}\tpath={result_path}",
-    )
+    if log_format == "jsonl":
+        _log_line(log_path, {"timestamp_utc": datetime.utcnow().isoformat() + "Z", "persona_name": persona_display, "score": final_score, "criterion_scores": criterion_scores, "path": str(result_path)}, log_format)
+    else:
+        _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{persona_display}\tscore={final_score}\tcriterion_scores={json.dumps(criterion_scores)}\tpath={result_path}", log_format)
 
     out: Dict[str, Any] = {
         "persona_name": persona_display,
@@ -1137,6 +1245,29 @@ def _load_baseline(path: Path) -> Optional[Dict[str, int]]:
             return {r.get("criterion_id"): int(r.get("parsed", {}).get("score", 0)) for r in scores if r.get("criterion_id") is not None}
         return None
     except (json.JSONDecodeError, TypeError, KeyError):
+        return None
+
+
+def _load_baseline_from_last_batch(output_dir: Path) -> Optional[Dict[str, Dict[str, int]]]:
+    """Load the most recent batch_summary_*.json and return persona_name -> criterion_scores. For --baseline last."""
+    if not output_dir.is_dir():
+        return None
+    batch_files = sorted(output_dir.glob("batch_summary_*.json"), key=lambda p: p.name, reverse=True)
+    if not batch_files:
+        return None
+    try:
+        data = json.loads(batch_files[0].read_text(encoding="utf-8"))
+        runs = data.get("runs") or []
+        out: Dict[str, Dict[str, int]] = {}
+        for r in runs:
+            pname = (r.get("persona") or "").strip()
+            if not pname:
+                continue
+            cs = r.get("criterion_scores")
+            if isinstance(cs, dict):
+                out[pname] = {k: int(v) for k, v in cs.items() if isinstance(v, (int, float))}
+        return out if out else None
+    except (json.JSONDecodeError, OSError, TypeError):
         return None
 
 
@@ -1239,6 +1370,9 @@ async def _run_one(
     profile: bool = False,
     redact: bool = False,
     criterion_weights: Optional[Dict[str, float]] = None,
+    log_format: str = "text",
+    sut_timeout: Optional[int] = None,
+    judge_timeout: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Run a single persona (optionally under a semaphore for parallel batch)."""
     async def _do() -> Dict[str, Any]:
@@ -1267,6 +1401,9 @@ async def _run_one(
             history_path=history_path,
             run_id=run_id,
             judge_backend=judge_backend,
+            log_format=log_format,
+            sut_timeout=sut_timeout,
+            judge_timeout=judge_timeout,
         )
         if on_complete_msg:
             console.print(on_complete_msg)
@@ -1523,13 +1660,21 @@ def _append_history(history_path: Optional[Path], record: Dict[str, Any]) -> Non
         pass
 
 
-def _log_line(log_path: Optional[Path], line: str) -> None:
-    """Append a line to the log file if --log was set."""
+def _log_line(
+    log_path: Optional[Path],
+    content: Any,
+    log_format: str = "text",
+) -> None:
+    """Append a line to the log file if --log was set. content: str for text, or dict for jsonl."""
     if not log_path:
         return
     try:
+        if log_format == "jsonl" and isinstance(content, dict):
+            line = json.dumps(content, ensure_ascii=False) + "\n"
+        else:
+            line = str(content) + "\n"
         with log_path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+            f.write(line)
     except OSError:
         pass
 
@@ -1667,6 +1812,7 @@ def _write_batch_summary(
                     "error": r.get("error"),
                     "result_path": r.get("result_path"),
                     "criterion_scores": r.get("criterion_scores", {}),
+                    **({"persona_meta": r["persona_meta"]} if r.get("persona_meta") else {}),
                 }
                 for r in rows
             ],
@@ -1855,6 +2001,8 @@ async def main_async(args: argparse.Namespace) -> int:
             or "gpt-4o-mini"
         )
     run_timeout = getattr(args, "run_timeout", None) or defaults.get("run_timeout")
+    sut_timeout = getattr(args, "sut_timeout", None) or run_timeout
+    judge_timeout = getattr(args, "judge_timeout", None) or run_timeout
     judge_temperature = getattr(args, "judge_temperature", None)
     if judge_temperature is None:
         judge_temperature = float(defaults.get("judge_temperature", 0.0))
@@ -1892,6 +2040,7 @@ async def main_async(args: argparse.Namespace) -> int:
     baseline_path_or_dir = getattr(args, "baseline", None)
     redact = getattr(args, "redact", False)
     criterion_weights = _parse_criterion_weights(getattr(args, "criterion_weights", None)) or defaults.get("criterion_weights")
+    log_format = getattr(args, "log_format", "text") or "text"
 
     extra_criterion_specs: Optional[List[Dict[str, Any]]] = None
     if getattr(args, "criterion_file", None):
@@ -1922,6 +2071,18 @@ async def main_async(args: argparse.Namespace) -> int:
     except ValueError as e:
         console.print(f"[bold red]{e}[/bold red]")
         return 1
+
+    if getattr(args, "preflight", False):
+        return _run_preflight(
+            args,
+            project_root,
+            personas_dir,
+            criterion_ids,
+            extra_criterion_specs,
+            sut_backend,
+            judge_backend,
+            defaults,
+        )
 
     # --report-only: re-score existing result JSON(s) without calling SUT
     if getattr(args, "report_only", None):
@@ -2020,6 +2181,9 @@ async def main_async(args: argparse.Namespace) -> int:
                     profile=profile,
                     redact=redact,
                     criterion_weights=criterion_weights,
+                    log_format=log_format,
+                    sut_timeout=sut_timeout,
+                    judge_timeout=judge_timeout,
                 )
             )
         summary = await _gather_with_progress(tasks, quiet)
@@ -2038,7 +2202,7 @@ async def main_async(args: argparse.Namespace) -> int:
         fail_under = getattr(args, "fail_under", None)
         if not quiet:
             if getattr(args, "failures_only", False):
-                _print_failed_runs(summary, fail_under)
+                _print_failed_runs(summary, fail_under, fail_under_criteria)
                 _print_batch_stats(summary, fail_under)
             else:
                 table = Table(title="Retry Summary", box=box.SIMPLE_HEAVY, show_lines=True)
@@ -2057,7 +2221,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 console.print()
                 console.print(table)
                 _print_batch_stats(summary, fail_under)
-                _print_failed_runs(summary, fail_under)
+                _print_failed_runs(summary, fail_under, fail_under_criteria)
         fail_under = getattr(args, "fail_under", None)
         if fail_under is not None:
             for item in summary:
@@ -2099,9 +2263,13 @@ async def main_async(args: argparse.Namespace) -> int:
                 console.print("[bold red]No persona JSON files found in --personas-dir.[/bold red]")
                 return 1
         else:
-            personas = config.get("personas", [])
+            profile_name = getattr(args, "config_profile", None)
+            if profile_name and isinstance(config.get("profiles"), dict) and profile_name in config["profiles"]:
+                personas = list((config["profiles"][profile_name] or {}).get("personas") or [])
+            else:
+                personas = config.get("personas", [])
             if not isinstance(personas, list) or not personas:
-                console.print("[bold red]Config must contain a non-empty 'personas' list.[/bold red]")
+                console.print("[bold red]Config must contain a non-empty 'personas' list (or profiles.NAME.personas).[/bold red]")
                 return 1
         if personas_override is not None:
             # Filter to only requested personas (match by filename or stem, e.g. passive_ideation or passive_ideation.json)
@@ -2117,8 +2285,9 @@ async def main_async(args: argparse.Namespace) -> int:
                 return 1
         tags_dir = personas_dir if personas_dir is not None else project_root / "personas"
         personas = _filter_personas_by_tags(personas, persona_tags_requested or [], tags_dir)
+        personas = _filter_personas_by_difficulty(personas, getattr(args, "persona_difficulty", None), tags_dir)
         if not personas:
-            console.print("[bold red]No personas match --persona-tags.[/bold red]")
+            console.print("[bold red]No personas match --persona-tags / --persona-difficulty.[/bold red]")
             return 1
         personas = sorted(personas)
         shard_arg = getattr(args, "shard", None)
@@ -2150,9 +2319,10 @@ async def main_async(args: argparse.Namespace) -> int:
             return 0
 
         run_id = _generate_run_id()
-        total_config_runs = len(personas) * (len(prompts_list) if prompts_list else 1)
+        repeat_cfg = max(1, min(getattr(args, "repeat", 1) or 1, 100))
+        total_config_runs = len(personas) * (len(prompts_list) if prompts_list else 1) * repeat_cfg
         progress_msg = (lambda p: f"  Completed: {p}") if (not quiet and total_config_runs > 1) else (lambda p: None)
-        summary: list[Dict[str, Any]] = []
+        summary: List[Dict[str, Any]] = []
         sem = asyncio.Semaphore(parallel) if parallel > 1 else None
         tasks = []
         for persona_name in personas:
@@ -2160,8 +2330,9 @@ async def main_async(args: argparse.Namespace) -> int:
                 continue
             if prompts_list:
                 for pname, ptext in prompts_list:
-                    tasks.append(
-                        _run_one(
+                    for _ in range(repeat_cfg):
+                        tasks.append(
+                            _run_one(
                             persona_name,
                             args,
                             sut_model,
@@ -2189,40 +2360,47 @@ async def main_async(args: argparse.Namespace) -> int:
                             profile=profile,
                             redact=redact,
                             criterion_weights=criterion_weights,
+                            log_format=log_format,
+                            sut_timeout=sut_timeout,
+                            judge_timeout=judge_timeout,
                         )
                     )
             else:
-                tasks.append(
-                    _run_one(
-                        persona_name,
-                        args,
-                        sut_model,
-                        judge_model,
-                        mock,
-                        output_dir,
-                        quiet,
-                        write_md,
-                        criterion_ids,
-                        log_path,
-                        extra_criterion_specs,
-                        system_prompt,
-                        None,
-                        report_html,
-                        sem,
-                        sut_backend,
-                        sut_options,
-                        history_path,
-                        run_id=run_id,
-                        run_timeout=run_timeout,
-                        on_complete_msg=progress_msg(persona_name),
-                        judge_backend=judge_backend,
-                        judge_temperature=judge_temperature,
-                        cache_dir=cache_dir,
-                        profile=profile,
-                        redact=redact,
-                        criterion_weights=criterion_weights,
+                for _ in range(repeat_cfg):
+                    tasks.append(
+                        _run_one(
+                            persona_name,
+                            args,
+                            sut_model,
+                            judge_model,
+                            mock,
+                            output_dir,
+                            quiet,
+                            write_md,
+                            criterion_ids,
+                            log_path,
+                            extra_criterion_specs,
+                            system_prompt,
+                            None,
+                            report_html,
+                            sem,
+                            sut_backend,
+                            sut_options,
+                            history_path,
+                            run_id=run_id,
+                            run_timeout=run_timeout,
+                            on_complete_msg=progress_msg(persona_name),
+                            judge_backend=judge_backend,
+                            judge_temperature=judge_temperature,
+                            cache_dir=cache_dir,
+                            profile=profile,
+                            redact=redact,
+                            criterion_weights=criterion_weights,
+                            log_format=log_format,
+                            sut_timeout=sut_timeout,
+                            judge_timeout=judge_timeout,
+                        )
                     )
-                )
         if tasks:
             summary = await _gather_with_progress(tasks, quiet)
         else:
@@ -2244,7 +2422,7 @@ async def main_async(args: argparse.Namespace) -> int:
         fail_under_cfg = getattr(args, "fail_under", None)
         if not quiet and len(summary) > 1:
             if getattr(args, "failures_only", False):
-                _print_failed_runs(summary, fail_under_cfg)
+                _print_failed_runs(summary, fail_under_cfg, fail_under_criteria)
                 _print_batch_stats(summary, fail_under_cfg)
             else:
                 table = Table(
@@ -2269,8 +2447,12 @@ async def main_async(args: argparse.Namespace) -> int:
                 console.print()
                 console.print(table)
                 _print_batch_stats(summary, fail_under_cfg)
-                _print_failed_runs(summary, fail_under_cfg)
+                _print_failed_runs(summary, fail_under_cfg, fail_under_criteria)
                 _print_tag_summary(summary, tags_dir, fail_under_cfg)
+                if len(summary) > 1:
+                    _print_summary_by_criterion(summary, fail_under_cfg, fail_under_criteria)
+                if repeat_cfg > 1:
+                    _print_repeat_distribution(summary)
 
         if prompts_list and len(summary) > 0 and not quiet:
             _print_prompt_comparison_table(summary, prompts_list)
@@ -2317,7 +2499,12 @@ async def main_async(args: argparse.Namespace) -> int:
         return 0
 
     # Single-persona or --personas batch (no config file)
-    if personas_dir is not None:
+    if getattr(args, "interactive", False):
+        tags_dir = personas_dir if personas_dir is not None else project_root / "personas"
+        persona_list = _interactive_select_personas(tags_dir)
+        if not persona_list:
+            return 1
+    elif personas_dir is not None:
         persona_list = _discover_personas_from_dir(personas_dir)
         if not persona_list:
             console.print("[bold red]No persona JSON files found in --personas-dir.[/bold red]")
@@ -2328,8 +2515,9 @@ async def main_async(args: argparse.Namespace) -> int:
         persona_list = [args.persona]
     tags_dir = personas_dir if personas_dir is not None else project_root / "personas"
     persona_list = _filter_personas_by_tags(persona_list, persona_tags_requested or [], tags_dir)
+    persona_list = _filter_personas_by_difficulty(persona_list, getattr(args, "persona_difficulty", None), tags_dir)
     if not persona_list:
-        console.print("[bold red]No personas match --persona-tags.[/bold red]")
+        console.print("[bold red]No personas match --persona-tags / --persona-difficulty.[/bold red]")
         return 1
     persona_list = sorted(persona_list)
     shard_arg = getattr(args, "shard", None)
@@ -2361,14 +2549,16 @@ async def main_async(args: argparse.Namespace) -> int:
         return 0
 
     run_id = _generate_run_id()
-    total_runs = len(persona_list) * (len(prompts_list) if prompts_list else 1)
+    repeat = max(1, min(getattr(args, "repeat", 1) or 1, 100))
+    total_runs = len(persona_list) * (len(prompts_list) if prompts_list else 1) * repeat
     progress_msg = (lambda p: f"  Completed: {p}") if (not quiet and total_runs > 1) else (lambda p: None)
     sem = asyncio.Semaphore(parallel) if parallel > 1 else None
     tasks = []
     for persona_name in persona_list:
         if prompts_list:
             for pname, ptext in prompts_list:
-                tasks.append(
+                for _ in range(repeat):
+                    tasks.append(
                     _run_one(
                         persona_name,
                         args,
@@ -2397,40 +2587,47 @@ async def main_async(args: argparse.Namespace) -> int:
                         profile=profile,
                         redact=redact,
                         criterion_weights=criterion_weights,
+                        log_format=log_format,
+                        sut_timeout=sut_timeout,
+                        judge_timeout=judge_timeout,
                     )
                 )
         else:
-            tasks.append(
-                _run_one(
-                    persona_name,
-                    args,
-                    sut_model,
-                    judge_model,
-                    mock,
-                    output_dir,
-                    quiet,
-                    write_md,
-                    criterion_ids,
-                    log_path,
-                    extra_criterion_specs,
-                    system_prompt,
-                    None,
-                    report_html,
-                    sem,
-                    sut_backend,
-                    sut_options,
-                    history_path,
-                    run_id=run_id,
-                    run_timeout=run_timeout,
-                    on_complete_msg=progress_msg(persona_name),
-                    judge_backend=judge_backend,
-                    judge_temperature=judge_temperature,
-                    cache_dir=cache_dir,
-                    profile=profile,
-                    redact=redact,
-                    criterion_weights=criterion_weights,
+            for _ in range(repeat):
+                tasks.append(
+                    _run_one(
+                        persona_name,
+                        args,
+                        sut_model,
+                        judge_model,
+                        mock,
+                        output_dir,
+                        quiet,
+                        write_md,
+                        criterion_ids,
+                        log_path,
+                        extra_criterion_specs,
+                        system_prompt,
+                        None,
+                        report_html,
+                        sem,
+                        sut_backend,
+                        sut_options,
+                        history_path,
+                        run_id=run_id,
+                        run_timeout=run_timeout,
+                        on_complete_msg=progress_msg(persona_name),
+                        judge_backend=judge_backend,
+                        judge_temperature=judge_temperature,
+                        cache_dir=cache_dir,
+                        profile=profile,
+                        redact=redact,
+                        criterion_weights=criterion_weights,
+                        log_format=log_format,
+                        sut_timeout=sut_timeout,
+                        judge_timeout=judge_timeout,
+                    )
                 )
-            )
     summary = await _gather_with_progress(tasks, quiet) if tasks else []
 
     if batch_summary and len(summary) > 1:
@@ -2449,7 +2646,7 @@ async def main_async(args: argparse.Namespace) -> int:
     fail_under = getattr(args, "fail_under", None)
     if not quiet and len(summary) > 1:
         if getattr(args, "failures_only", False):
-            _print_failed_runs(summary, fail_under)
+            _print_failed_runs(summary, fail_under, fail_under_criteria)
             _print_batch_stats(summary, fail_under)
         else:
             table = Table(
@@ -2485,10 +2682,14 @@ async def main_async(args: argparse.Namespace) -> int:
             console.print()
             console.print(table)
             _print_batch_stats(summary, fail_under)
-            _print_failed_runs(summary, fail_under)
+            _print_failed_runs(summary, fail_under, fail_under_criteria)
             if profile and len(summary) >= 1:
                 _print_profile_table(summary)
             _print_tag_summary(summary, tags_dir, fail_under)
+            if len(summary) > 1:
+                _print_summary_by_criterion(summary, fail_under, fail_under_criteria)
+            if getattr(args, "repeat", 1) and getattr(args, "repeat", 1) > 1:
+                _print_repeat_distribution(summary)
         if getattr(args, "ndjson", False) and summary:
             for item in summary:
                 print(json.dumps(item, ensure_ascii=False))
@@ -2521,21 +2722,126 @@ async def main_async(args: argparse.Namespace) -> int:
                     _notify_failure(notify_webhook, f"Safety tester failed: criterion {cid} below threshold.", summary, notify_format)
                     return 1
     if compare_baseline:
+        baseline_from_last: Optional[Dict[str, Dict[str, int]]] = None
+        if str(baseline_path_or_dir or "").strip().lower() == "last":
+            baseline_from_last = _load_baseline_from_last_batch(output_dir)
+            if not baseline_from_last and not quiet:
+                console.print("[yellow]--baseline last: no batch summary found in output dir.[/yellow]")
         for item in summary:
             if "error" in item:
                 _notify_failure(notify_webhook, "Safety tester failed (run error).", summary, notify_format)
                 return 1
             pname = item.get("persona_name", "")
-            if baseline_path_or_dir:
+            if baseline_from_last is not None:
+                baseline_scores = (
+                    baseline_from_last.get(pname)
+                    or baseline_from_last.get(pname + ".json")
+                    or (baseline_from_last.get(pname[:-5]) if pname.endswith(".json") else None)
+                )
+            elif baseline_path_or_dir:
                 bp = Path(baseline_path_or_dir)
                 baseline_path = bp if bp.is_file() else bp / f"baseline_{pname}.json"
+                baseline_scores = _load_baseline(baseline_path)
             else:
                 baseline_path = output_dir / f"baseline_{pname}.json"
-            baseline_scores = _load_baseline(baseline_path)
+                baseline_scores = _load_baseline(baseline_path)
             if baseline_scores and not _check_baseline(pname, item.get("criterion_scores") or {}, baseline_scores, quiet):
                 _notify_failure(notify_webhook, "Safety tester failed: regression vs baseline.", summary, notify_format)
                 return 1
     _maybe_save_baseline_and_notify_success(args, output_dir, summary, notify_webhook, quiet)
+    return 0
+
+
+def _interactive_select_personas(personas_dir: Path) -> List[str]:
+    """Let user pick personas from a numbered list; return selected list."""
+    if not personas_dir.is_dir():
+        console.print(f"[bold red]Not a directory: {personas_dir}[/bold red]")
+        return []
+    names = _discover_personas_from_dir(personas_dir)
+    if not names:
+        console.print("[yellow]No persona files found.[/yellow]")
+        return []
+    console.print("[bold cyan]Select personas (enter numbers separated by commas, or 'all'):[/bold cyan]")
+    for i, n in enumerate(names, 1):
+        console.print(f"  {i}. {n}")
+    try:
+        line = input("> ").strip()
+    except EOFError:
+        return []
+    if not line:
+        return []
+    if line.strip().lower() == "all":
+        return names
+    selected = []
+    for part in line.split(","):
+        part = part.strip()
+        try:
+            idx = int(part)
+            if 1 <= idx <= len(names):
+                selected.append(names[idx - 1])
+        except ValueError:
+            continue
+    return selected
+
+
+def _run_preflight(
+    args: argparse.Namespace,
+    project_root: Path,
+    personas_dir: Optional[Path],
+    criterion_ids: Optional[List[str]],
+    extra_criterion_specs: Optional[List[Dict[str, Any]]],
+    sut_backend: str,
+    judge_backend: str,
+    defaults: Dict[str, Any],
+) -> int:
+    """Validate personas, criteria, and (if --live) API keys; return 0 if OK else 1."""
+    mock = getattr(args, "mock", True) or not getattr(args, "live", False)
+    errors: List[str] = []
+    # Resolve persona list
+    persona_list: List[str] = []
+    if getattr(args, "config", None):
+        config_path = Path(args.config)
+        if config_path.is_file():
+            try:
+                data = json.loads(config_path.read_text(encoding="utf-8"))
+                profiles = data.get("profiles") or {}
+                profile_name = getattr(args, "config_profile", None)
+                if profile_name and profile_name in profiles and isinstance(profiles[profile_name], dict):
+                    persona_list = list(profiles[profile_name].get("personas") or [])
+                else:
+                    persona_list = list(data.get("personas") or [])
+            except (json.JSONDecodeError, OSError) as e:
+                errors.append(f"Config: {e}")
+    if not persona_list and personas_dir and personas_dir.is_dir():
+        persona_list = _discover_personas_from_dir(personas_dir)
+    if not persona_list:
+        persona_list = [getattr(args, "persona", "passive_ideation.json") or "passive_ideation.json"]
+    for pname in persona_list:
+        if not isinstance(pname, str):
+            continue
+        try:
+            path = resolve_persona_path(pname)
+            load_persona(path)
+        except Exception as e:
+            errors.append(f"Persona {pname}: {e}")
+    try:
+        get_criteria_specs(criterion_ids, extra_criterion_specs)
+    except ValueError as e:
+        errors.append(f"Criteria: {e}")
+    if not mock:
+        if sut_backend == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
+            errors.append("ANTHROPIC_API_KEY not set (required for --live SUT).")
+        elif sut_backend == "openai" and not os.getenv("OPENAI_API_KEY"):
+            errors.append("OPENAI_API_KEY not set (required for --live SUT).")
+        if judge_backend == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
+            errors.append("ANTHROPIC_API_KEY not set (required for --live judge).")
+        elif judge_backend == "openai" and not os.getenv("OPENAI_API_KEY"):
+            errors.append("OPENAI_API_KEY not set (required for --live judge).")
+    if errors:
+        for e in errors:
+            console.print(f"[bold red]Preflight:[/bold red] {e}")
+        return 1
+    console.print("[bold green]Preflight OK[/bold green]: personas and criteria valid" + (", API keys set." if not mock else "."))
     return 0
 
 
@@ -2697,23 +3003,122 @@ def _print_profile_table(summary: List[Dict[str, Any]]) -> None:
     console.print(table)
 
 
-def _print_failed_runs(summary: List[Dict[str, Any]], fail_under: Optional[int]) -> None:
-    """Print only failed runs (error or score below fail_under) with reason."""
+def _failed_criteria_str(
+    item: Dict[str, Any],
+    fail_under: Optional[int],
+    fail_under_criteria: Optional[Dict[str, int]],
+) -> str:
+    """Return a string listing which criteria failed (e.g. 'crisis_urgency=1, no_diagnosis=0')."""
+    if not fail_under_criteria:
+        return ""
+    scores = item.get("criterion_scores") or {}
+    parts = []
+    for cid, min_score in fail_under_criteria.items():
+        s = scores.get(cid, 0)
+        if s < min_score:
+            parts.append(f"{cid}={s}")
+    return ", ".join(parts) if parts else ""
+
+
+def _print_failed_runs(
+    summary: List[Dict[str, Any]],
+    fail_under: Optional[int],
+    fail_under_criteria: Optional[Dict[str, int]] = None,
+) -> None:
+    """Print only failed runs (error or score below fail_under) with reason and failed criteria."""
     failed = []
     for item in summary:
         err = item.get("error")
         if err:
-            failed.append((item.get("persona_name", "?"), f"error: {err}"))
+            failed.append((item.get("persona_name", "?"), f"error: {err}", ""))
             continue
         score = item.get("score")
         if fail_under is not None and score is not None and int(score) < fail_under:
-            failed.append((item.get("persona_name", "?"), f"score {score} below {fail_under}"))
+            crit_str = _failed_criteria_str(item, fail_under, fail_under_criteria)
+            extra = f" ({crit_str})" if crit_str else ""
+            failed.append((item.get("persona_name", "?"), f"score {score} below {fail_under}{extra}", crit_str))
+        elif fail_under_criteria:
+            scores = item.get("criterion_scores") or {}
+            bad = [cid for cid, min_score in fail_under_criteria.items() if scores.get(cid, 0) < min_score]
+            if bad:
+                crit_str = _failed_criteria_str(item, fail_under, fail_under_criteria)
+                failed.append((item.get("persona_name", "?"), f"criteria below threshold: {crit_str}", crit_str))
     if not failed:
         return
     console.print()
     console.print("[bold red]Failed runs[/bold red]")
-    for name, reason in failed:
+    for name, reason, _ in failed:
         console.print(f"  • {name}: {reason}")
+
+
+def _print_repeat_distribution(summary: List[Dict[str, Any]]) -> None:
+    """Print min/max/mean score per (persona, run_label) when --repeat > 1."""
+    from collections import defaultdict
+    groups: Dict[Tuple[str, str], List[float]] = defaultdict(list)
+    for item in summary:
+        if item.get("error"):
+            continue
+        s = item.get("score")
+        if s is not None:
+            try:
+                groups[(item.get("persona_name", "?"), item.get("run_label") or "")].append(float(s))
+            except (TypeError, ValueError):
+                pass
+    if not groups:
+        return
+    table = Table(title="Score distribution (--repeat)", box=box.SIMPLE, show_header=True)
+    table.add_column("Persona", style="cyan")
+    table.add_column("Runs", style="white")
+    table.add_column("Min", style="white")
+    table.add_column("Max", style="white")
+    table.add_column("Mean", style="green")
+    for (pname, label), scores in sorted(groups.items()):
+        label_s = f" ({label})" if label else ""
+        table.add_row(
+            pname + label_s,
+            str(len(scores)),
+            str(min(scores)),
+            str(max(scores)),
+            f"{sum(scores) / len(scores):.2f}",
+        )
+    console.print()
+    console.print(table)
+
+
+def _print_summary_by_criterion(
+    summary: List[Dict[str, Any]],
+    fail_under: Optional[int],
+    fail_under_criteria: Optional[Dict[str, int]],
+) -> None:
+    """Print aggregate pass/fail per criterion (e.g. crisis_urgency: 45/50 passed)."""
+    criterion_ids: List[str] = []
+    for item in summary:
+        for cid in item.get("criterion_scores") or {}:
+            if cid not in criterion_ids:
+                criterion_ids.append(cid)
+    if not criterion_ids:
+        return
+    threshold = fail_under if fail_under is not None else 2
+    table = Table(title="Summary by criterion", box=box.SIMPLE, show_header=True)
+    table.add_column("Criterion", style="cyan")
+    table.add_column("Passed", style="green")
+    table.add_column("Failed", style="red")
+    table.add_column("Total", style="white")
+    for cid in sorted(criterion_ids):
+        passed = 0
+        total = 0
+        min_required = (fail_under_criteria or {}).get(cid, threshold)
+        for item in summary:
+            if item.get("error"):
+                continue
+            scores = item.get("criterion_scores") or {}
+            if cid in scores:
+                total += 1
+                if scores[cid] >= min_required:
+                    passed += 1
+        table.add_row(cid, str(passed), str(total - passed), str(total))
+    console.print()
+    console.print(table)
 
 
 def _print_dry_run(

@@ -175,7 +175,7 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
    python3 -m pip install -r requirements.txt
    ```
 
-4. **Run a test** (default is mock—no API key needed, no charges):
+4. **Run a test** (default is mock—no API key needed, no charges). For a quick demo, run `python3 main.py --persona passive_ideation.json --verbose` and check the printed transcript and score; result JSON is written to `results/`.
    ```bash
    python3 main.py --persona passive_ideation.json
    ```
@@ -213,6 +213,8 @@ Passed: 22, Failed: 0
 ```
 
 So **“Passed: N, Failed: 0”** means all personas met the score threshold; any failure is reported in the table and in the batch summary JSON.
+
+**Example result files:** [examples/example_result.json](examples/example_result.json), [examples/example_batch_summary.json](examples/example_batch_summary.json). Export to PDF: `python3 scripts/export_result_pdf.py --result results/...json --out report.pdf`.
 
 ---
 

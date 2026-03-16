@@ -91,6 +91,14 @@ def test_mock_run_single_persona_quiet() -> None:
         ndjson=False,
         redact=False,
         criterion_weights=None,
+        preflight=False,
+        interactive=False,
+        repeat=1,
+        sut_timeout=None,
+        judge_timeout=None,
+        log_format="text",
+        config_profile=None,
+        persona_difficulty=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -189,6 +197,14 @@ def test_fail_under_exits_1_when_below() -> None:
         ndjson=False,
         redact=False,
         criterion_weights=None,
+        preflight=False,
+        interactive=False,
+        repeat=1,
+        sut_timeout=None,
+        judge_timeout=None,
+        log_format="text",
+        config_profile=None,
+        persona_difficulty=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -267,6 +283,14 @@ def test_fail_under_exits_0_when_above() -> None:
         ndjson=False,
         redact=False,
         criterion_weights=None,
+        preflight=False,
+        interactive=False,
+        repeat=1,
+        sut_timeout=None,
+        judge_timeout=None,
+        log_format="text",
+        config_profile=None,
+        persona_difficulty=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -345,6 +369,14 @@ def test_dry_run_exits_0_and_prints_plan() -> None:
         ndjson=False,
         redact=False,
         criterion_weights=None,
+        preflight=False,
+        interactive=False,
+        repeat=1,
+        sut_timeout=None,
+        judge_timeout=None,
+        log_format="text",
+        config_profile=None,
+        persona_difficulty=None,
     )
     buf = StringIO()
     with redirect_stdout(buf):
@@ -446,6 +478,14 @@ def test_history_append_writes_one_line() -> None:
             ndjson=False,
             redact=False,
             criterion_weights=None,
+            preflight=False,
+            interactive=False,
+            repeat=1,
+            sut_timeout=None,
+            judge_timeout=None,
+            log_format="text",
+            config_profile=None,
+            persona_difficulty=None,
         )
         with redirect_stdout(StringIO()):
             asyncio.run(main.main_async(args))
@@ -585,6 +625,14 @@ def test_result_json_has_schema_version() -> None:
             ndjson=False,
             redact=False,
             criterion_weights=None,
+            preflight=False,
+            interactive=False,
+            repeat=1,
+            sut_timeout=None,
+            judge_timeout=None,
+            log_format="text",
+            config_profile=None,
+            persona_difficulty=None,
         )
         with redirect_stdout(StringIO()):
             asyncio.run(main.main_async(args))

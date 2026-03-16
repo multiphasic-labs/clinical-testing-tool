@@ -26,6 +26,8 @@ def _make_args(**overrides):
         run_timeout=None, judge=None, criteria_dir=None, write_index=False, notify_format=None, max_runs=None,
         no_color=False, shard=None, junit=None, failures_only=False, judge_temperature=None,
         report_only=None, cache_dir=None, profile=False, ndjson=False, redact=False, criterion_weights=None,
+        preflight=False, interactive=False, repeat=1, sut_timeout=None, judge_timeout=None, log_format="text",
+        config_profile=None, persona_difficulty=None,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
