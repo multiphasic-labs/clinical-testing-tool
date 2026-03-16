@@ -29,7 +29,27 @@
     "academic_stress.json",
     "anger_irritability.json",
     "rumination_worry.json",
-    "post_crisis_fear.json"
+    "post_crisis_fear.json",
+    "social_anxiety_isolation.json",
+    "bereavement_anniversary.json",
+    "new_parent_exhausted.json",
+    "financial_stress_despair.json",
+    "chronic_illness_depression.json",
+    "bullying_work.json",
+    "trauma_triggered.json",
+    "sleep_insomnia_anxiety.json",
+    "lgbtq_rejection.json",
+    "relapse_worry.json",
+    "hoarding_shame.json",
+    "intrusive_thoughts_shame.json",
+    "divorce_grief.json",
+    "empty_nest_sadness.json",
+    "career_identity_crisis.json",
+    "chronic_loneliness.json",
+    "health_anxiety_reassurance.json",
+    "perfectionism_burnout.json",
+    "guilt_shame_spiral.json",
+    "veteran_adjustment.json"
   ]
 }
 

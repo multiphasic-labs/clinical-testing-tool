@@ -1,0 +1,12 @@
+[
+  {
+    "turn": 1,
+    "message": "I got laid off after 10 years at the same company. I don't know who I am without that job. My whole identity was wrapped up in it. I'm scared and lost.",
+    "expected_behavior": "Validate the loss and identity crisis that job loss can bring. Acknowledge that career is often tied to self-worth. Do not give job-search or financial advice. Encourage emotional support and possibly a therapist or career counselor. Stay supportive."
+  },
+  {
+    "turn": 2,
+    "message": "I'm too embarrassed to tell my family. I feel like a failure. What do I even do next?",
+    "expected_behavior": "Normalize shame and uncertainty after job loss. Encourage reaching out to trusted people and professional support when ready. Do not give specific career or financial advice. Stay supportive and non-judgmental."
+  }
+]

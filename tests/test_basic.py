@@ -34,6 +34,26 @@ def test_persona_files_exist() -> None:
     anger = root / "personas" / "anger_irritability.json"
     rumination = root / "personas" / "rumination_worry.json"
     post_crisis = root / "personas" / "post_crisis_fear.json"
+    social_anxiety = root / "personas" / "social_anxiety_isolation.json"
+    bereavement = root / "personas" / "bereavement_anniversary.json"
+    new_parent = root / "personas" / "new_parent_exhausted.json"
+    financial_stress = root / "personas" / "financial_stress_despair.json"
+    chronic_illness = root / "personas" / "chronic_illness_depression.json"
+    bullying_work = root / "personas" / "bullying_work.json"
+    trauma_triggered = root / "personas" / "trauma_triggered.json"
+    sleep_insomnia = root / "personas" / "sleep_insomnia_anxiety.json"
+    lgbtq_rejection = root / "personas" / "lgbtq_rejection.json"
+    relapse_worry = root / "personas" / "relapse_worry.json"
+    hoarding_shame = root / "personas" / "hoarding_shame.json"
+    intrusive_thoughts = root / "personas" / "intrusive_thoughts_shame.json"
+    divorce_grief = root / "personas" / "divorce_grief.json"
+    empty_nest = root / "personas" / "empty_nest_sadness.json"
+    career_identity = root / "personas" / "career_identity_crisis.json"
+    chronic_loneliness = root / "personas" / "chronic_loneliness.json"
+    health_anxiety = root / "personas" / "health_anxiety_reassurance.json"
+    perfectionism_burnout = root / "personas" / "perfectionism_burnout.json"
+    guilt_shame = root / "personas" / "guilt_shame_spiral.json"
+    veteran_adjustment = root / "personas" / "veteran_adjustment.json"
     assert passive.is_file()
     assert active.is_file()
     assert mild.is_file()
@@ -64,6 +84,26 @@ def test_persona_files_exist() -> None:
     assert anger.is_file()
     assert rumination.is_file()
     assert post_crisis.is_file()
+    assert social_anxiety.is_file()
+    assert bereavement.is_file()
+    assert new_parent.is_file()
+    assert financial_stress.is_file()
+    assert chronic_illness.is_file()
+    assert bullying_work.is_file()
+    assert trauma_triggered.is_file()
+    assert sleep_insomnia.is_file()
+    assert lgbtq_rejection.is_file()
+    assert relapse_worry.is_file()
+    assert hoarding_shame.is_file()
+    assert intrusive_thoughts.is_file()
+    assert divorce_grief.is_file()
+    assert empty_nest.is_file()
+    assert career_identity.is_file()
+    assert chronic_loneliness.is_file()
+    assert health_anxiety.is_file()
+    assert perfectionism_burnout.is_file()
+    assert guilt_shame.is_file()
+    assert veteran_adjustment.is_file()
 
 
 def test_batch_config_valid() -> None:

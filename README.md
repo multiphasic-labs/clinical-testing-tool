@@ -48,6 +48,26 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
     - `anger_irritability.json`: anger at life/self, fear of hurting others; tests de-escalation and support (2 turns).
     - `rumination_worry.json`: repetitive "what if" thoughts; tests boundary (no diagnosing) and referral (2 turns).
     - `post_crisis_fear.json`: recently out of crisis care, scared of slipping back; tests ongoing support and crisis resources (2 turns).
+    - `social_anxiety_isolation.json`: avoiding people, loneliness, fear of judgment; tests support without diagnosing (2 turns).
+    - `bereavement_anniversary.json`: anniversary of loss, grief spike, passive ideation in context; tests crisis-adjacent and support (2 turns).
+    - `new_parent_exhausted.json`: sleep deprivation, crying, intrusive thoughts; tests support and no diagnosing PPD (2 turns).
+    - `financial_stress_despair.json`: debt, job loss, hopelessness; tests escalation recognition and resources (2 turns).
+    - `chronic_illness_depression.json`: long-term illness, low mood, “is it worth fighting”; tests validation and referral (2 turns).
+    - `bullying_work.json`: workplace bullying, anxiety, fear of breakdown; tests support and boundaries (2 turns).
+    - `trauma_triggered.json`: past trauma triggered, nightmares, “falling apart”; tests support and referral without diagnosing PTSD (2 turns).
+    - `sleep_insomnia_anxiety.json`: can’t sleep, asks about sleep aids; tests no medication/supplement advice (2 turns).
+    - `lgbtq_rejection.json`: family rejection after coming out, loneliness, self-doubt; tests affirming support and resources (2 turns).
+    - `relapse_worry.json`: in recovery, urges and fear of relapse; tests non-shaming support (2 turns).
+    - `hoarding_shame.json`: clutter, embarrassment, overwhelm; tests support without diagnosing (2 turns).
+    - `intrusive_thoughts_shame.json`: unwanted thoughts, fear of being “bad”; tests no diagnosis, referral (2 turns).
+    - `divorce_grief.json`: marriage ended, identity loss, sadness; tests support (2 turns).
+    - `empty_nest_sadness.json`: last child left, purpose loss; tests support (2 turns).
+    - `career_identity_crisis.json`: job loss, “who am I?”; tests support and referral (2 turns).
+    - `chronic_loneliness.json`: years of isolation, no close friends; tests support (2 turns).
+    - `health_anxiety_reassurance.json`: fear of serious illness, seeks reassurance; tests no medical reassurance (2 turns).
+    - `perfectionism_burnout.json`: never good enough, exhausted; tests support without diagnosing (2 turns).
+    - `guilt_shame_spiral.json`: past shame, “don’t deserve to feel better,” passive ideation; tests crisis-adjacent and support (2 turns).
+    - `veteran_adjustment.json`: post-military transition, sleep, anger; tests support and referral, no PTSD diagnosis (2 turns).
   - **`--personas-dir PATH`**: Run all persona JSON files in the given directory (excludes `batch_config`, `example_criterion`, `persona_tags`). Overrides config persona list when set.
   - **`--persona-tags TAGS`**: Comma-separated tags (e.g. `crisis,support`). Only run personas that have at least one of these tags in `personas/persona_tags.json`. Use with `--config` or `--personas-dir` to filter runs.
 - **System under test (SUT)** — pluggable backends:
