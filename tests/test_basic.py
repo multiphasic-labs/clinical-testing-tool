@@ -134,6 +134,126 @@ def test_persona_files_exist() -> None:
     avoid_talking_about_suicide_shame = root / "personas" / "avoid_talking_about_suicide_shame.json"
     postvention_support_group_fear_return = root / "personas" / "postvention_support_group_fear_return.json"
     birthday_holidays_after_suicide_passive_thoughts = root / "personas" / "birthday_holidays_after_suicide_passive_thoughts.json"
+    coworker_threats_after_complaint_fear = root / "personas" / "coworker_threats_after_complaint_fear.json"
+    reporting_harassment_retaliation_workplace_fear = root / "personas" / "reporting_harassment_retaliation_workplace_fear.json"
+    ex_stalking_at_workplace_panic_fear = root / "personas" / "ex_stalking_at_workplace_panic_fear.json"
+    violent_client_service_worker_safety_fear = root / "personas" / "violent_client_service_worker_safety_fear.json"
+    workplace_lockdown_threat_panic = root / "personas" / "workplace_lockdown_threat_panic.json"
+    after_calling_police_domestic_risk_at_work = root / "personas" / "after_calling_police_domestic_risk_at_work.json"
+    security_alarm_breach_disbelief = root / "personas" / "security_alarm_breach_disbelief.json"
+    boss_downplays_safety_threats = root / "personas" / "boss_downplays_safety_threats.json"
+    cyberstalking_work_chat_phishing_fear = root / "personas" / "cyberstalking_work_chat_phishing_fear.json"
+    threatening_note_breakroom_freeze = root / "personas" / "threatening_note_breakroom_freeze.json"
+    mortgage_foreclosure_imminent_destabilizing = root / "personas" / "mortgage_foreclosure_imminent_destabilizing.json"
+    couch_surfing_transport_income_overwhelm = root / "personas" / "couch_surfing_transport_income_overwhelm.json"
+    shelter_line_waiting_insomnia_panic = root / "personas" / "shelter_line_waiting_insomnia_panic.json"
+    housing_application_rejection_deflated = root / "personas" / "housing_application_rejection_deflated.json"
+    rent_increase_math_panic = root / "personas" / "rent_increase_math_panic.json"
+    landlord_illegal_entry_fear = root / "personas" / "landlord_illegal_entry_fear.json"
+    locked_out_of_home_no_phone_food_panic = root / "personas" / "locked_out_of_home_no_phone_food_panic.json"
+    deposit_refund_scam_shame_fear = root / "personas" / "deposit_refund_scam_shame_fear.json"
+    utility_water_gas_cutoff_grief = root / "personas" / "utility_water_gas_cutoff_grief.json"
+    roommate_threaten_eviction_split_rent = root / "personas" / "roommate_threaten_eviction_split_rent.json"
+    doctor_dismisses_symptoms_gaslighting_fear = root / "personas" / "doctor_dismisses_symptoms_gaslighting_fear.json"
+    er_discharge_no_followup_confusion = root / "personas" / "er_discharge_no_followup_confusion.json"
+    waiting_diagnosis_ruminating_fear = root / "personas" / "waiting_diagnosis_ruminating_fear.json"
+    pre_surgery_anxiety_catastrophizing = root / "personas" / "pre_surgery_anxiety_catastrophizing.json"
+    medication_side_effect_fear_still_taking = root / "personas" / "medication_side_effect_fear_still_taking.json"
+    lab_results_delay_hypervigilance = root / "personas" / "lab_results_delay_hypervigilance.json"
+    chronic_flare_hiding_from_family = root / "personas" / "chronic_flare_hiding_from_family.json"
+    disability_benefits_review_medical_anxiety = root / "personas" / "disability_benefits_review_medical_anxiety.json"
+    nurse_shift_burnout_moral_injury = root / "personas" / "nurse_shift_burnout_moral_injury.json"
+    needle_phobia_avoiding_care = root / "personas" / "needle_phobia_avoiding_care.json"
+    immigration_hearing_date_insomnia_dread = root / "personas" / "immigration_hearing_date_insomnia_dread.json"
+    asylum_case_wait_years_numbness = root / "personas" / "asylum_case_wait_years_numbness.json"
+    mixed_status_family_school_forms_fear = root / "personas" / "mixed_status_family_school_forms_fear.json"
+    residency_delay_partner_abroad_lonely = root / "personas" / "residency_delay_partner_abroad_lonely.json"
+    lost_immigration_documents_panic_shame = root / "personas" / "lost_immigration_documents_panic_shame.json"
+    workplace_wage_theft_fear_status_retaliation = root / "personas" / "workplace_wage_theft_fear_status_retaliation.json"
+    international_student_postgrad_timeline_panic = root / "personas" / "international_student_postgrad_timeline_panic.json"
+    airport_secondary_screening_aftermath_hypervigilance = root / "personas" / "airport_secondary_screening_aftermath_hypervigilance.json"
+    immigration_paperwork_scam_shame_distrust = root / "personas" / "immigration_paperwork_scam_shame_distrust.json"
+    loved_one_detained_little_information_grief = root / "personas" / "loved_one_detained_little_information_grief.json"
+    sextortion_blackmail_threat_shame_cycle = root / "personas" / "sextortion_blackmail_threat_shame_cycle.json"
+    intimate_content_shared_without_consent_by_ex = root / "personas" / "intimate_content_shared_without_consent_by_ex.json"
+    romance_scam_savings_lost_shame_isolation = root / "personas" / "romance_scam_savings_lost_shame_isolation.json"
+    elder_financial_exploitation_relative_control_fear = root / "personas" / "elder_financial_exploitation_relative_control_fear.json"
+    authority_impersonation_phone_scam_elder_panic = root / "personas" / "authority_impersonation_phone_scam_elder_panic.json"
+    youth_online_image_pressure_fear_telling_parent = root / "personas" / "youth_online_image_pressure_fear_telling_parent.json"
+    synthetic_intimate_media_fear_reputation = root / "personas" / "synthetic_intimate_media_fear_reputation.json"
+    investment_fraud_trusted_group_chat_shame = root / "personas" / "investment_fraud_trusted_group_chat_shame.json"
+    account_takeover_phishing_panic_shame = root / "personas" / "account_takeover_phishing_panic_shame.json"
+    workplace_rumor_synthetic_intimate_media_fear = root / "personas" / "workplace_rumor_synthetic_intimate_media_fear.json"
+    sports_betting_chase_losses_shame_partner_lies = root / "personas" / "sports_betting_chase_losses_shame_partner_lies.json"
+    online_casino_losses_hidden_rent_panic = root / "personas" / "online_casino_losses_hidden_rent_panic.json"
+    gambling_recovery_meeting_slip_shame_isolation = root / "personas" / "gambling_recovery_meeting_slip_shame_isolation.json"
+    payday_loan_gambling_debt_trap_dread = root / "personas" / "payday_loan_gambling_debt_trap_dread.json"
+    athlete_coach_body_comment_restrictive_fear = root / "personas" / "athlete_coach_body_comment_restrictive_fear.json"
+    compulsive_exercise_identity_rest_day_spiral = root / "personas" / "compulsive_exercise_identity_rest_day_spiral.json"
+    endurance_training_underfueling_fatigue_low_mood = root / "personas" / "endurance_training_underfueling_fatigue_low_mood.json"
+    team_performance_supplement_pressure_anxiety = root / "personas" / "team_performance_supplement_pressure_anxiety.json"
+    sleep_deprivation_visual_weirdness_fear_mind = root / "personas" / "sleep_deprivation_visual_weirdness_fear_mind.json"
+    exam_stress_perceptual_oddity_fear_psychosis = root / "personas" / "exam_stress_perceptual_oddity_fear_psychosis.json"
+    miscarriage_early_loss_isolation_shame = root / "personas" / "miscarriage_early_loss_isolation_shame.json"
+    recurrent_pregnancy_loss_grief_despair = root / "personas" / "recurrent_pregnancy_loss_grief_despair.json"
+    stillbirth_grief_anniversary_dread = root / "personas" / "stillbirth_grief_anniversary_dread.json"
+    termination_medical_reasons_grief_secrecy = root / "personas" / "termination_medical_reasons_grief_secrecy.json"
+    infertility_two_week_wait_obsessing = root / "personas" / "infertility_two_week_wait_obsessing.json"
+    ivf_cycle_stimulation_exhaustion_relationship_strain = root / "personas" / "ivf_cycle_stimulation_exhaustion_relationship_strain.json"
+    ivf_embryo_transfer_failure_numbness = root / "personas" / "ivf_embryo_transfer_failure_numbness.json"
+    ttc_partner_timeline_mismatch_resentment = root / "personas" / "ttc_partner_timeline_mismatch_resentment.json"
+    pregnancy_after_prior_loss_every_symptom_panic = root / "personas" / "pregnancy_after_prior_loss_every_symptom_panic.json"
+    adoption_process_stall_ambivalent_grief = root / "personas" / "adoption_process_stall_ambivalent_grief.json"
+    concussion_cleared_athlete_still_symptomatic_fear = root / "personas" / "concussion_cleared_athlete_still_symptomatic_fear.json"
+    college_concussion_academic_accommodations_shame = root / "personas" / "college_concussion_academic_accommodations_shame.json"
+    workplace_head_bump_unreported_worsening_anxiety = root / "personas" / "workplace_head_bump_unreported_worsening_anxiety.json"
+    parent_teen_athlete_second_concussion_fear = root / "personas" / "parent_teen_athlete_second_concussion_fear.json"
+    car_crash_mild_head_injury_insurance_rumination = root / "personas" / "car_crash_mild_head_injury_insurance_rumination.json"
+    post_concussion_screen_light_noise_overwhelm = root / "personas" / "post_concussion_screen_light_noise_overwhelm.json"
+    concussion_mood_swings_partner_guilt = root / "personas" / "concussion_mood_swings_partner_guilt.json"
+    concussion_word_finding_fail_meeting_humiliation = root / "personas" / "concussion_word_finding_fail_meeting_humiliation.json"
+    competitive_athlete_career_end_concussion_history_grief = root / "personas" / "competitive_athlete_career_end_concussion_history_grief.json"
+    exertion_headache_return_to_exercise_fear_spiral = root / "personas" / "exertion_headache_return_to_exercise_fear_spiral.json"
+    pain_clinic_discontinued_abrupt_reduction_anxiety = root / "personas" / "pain_clinic_discontinued_abrupt_reduction_anxiety.json"
+    medical_opioid_taper_chronic_pain_fear_street_thought = root / "personas" / "medical_opioid_taper_chronic_pain_fear_street_thought.json"
+    post_surgery_breakthrough_refill_denied_helpless = root / "personas" / "post_surgery_breakthrough_refill_denied_helpless.json"
+    pain_contract_urine_monitoring_paranoia_shame = root / "personas" / "pain_contract_urine_monitoring_paranoia_shame.json"
+    spouse_pain_meds_addiction_accusation_grief = root / "personas" / "spouse_pain_meds_addiction_accusation_grief.json"
+    young_adult_chronic_pain_er_dismissed_drug_seeking_shame = root / "personas" / "young_adult_chronic_pain_er_dismissed_drug_seeking_shame.json"
+    rural_pain_specialist_access_barrier_despond = root / "personas" / "rural_pain_specialist_access_barrier_despond.json"
+    pain_flare_disability_work_loss_passive_guilt = root / "personas" / "pain_flare_disability_work_loss_passive_guilt.json"
+    kinesiophobia_reinjury_avoidance_depression_spiral = root / "personas" / "kinesiophobia_reinjury_avoidance_depression_spiral.json"
+    workers_comp_pain_claim_scrutiny_isolation = root / "personas" / "workers_comp_pain_claim_scrutiny_isolation.json"
+    paramedic_pediatric_call_intrusive_memories = root / "personas" / "paramedic_pediatric_call_intrusive_memories.json"
+    firefighter_mayday_crew_injury_survivor_guilt = root / "personas" / "firefighter_mayday_crew_injury_survivor_guilt.json"
+    ems_partner_same_unit_shift_conflict_home = root / "personas" / "ems_partner_same_unit_shift_conflict_home.json"
+    emergency_dispatcher_protocol_correct_still_guilty_insomnia = root / "personas" / "emergency_dispatcher_protocol_correct_still_guilty_insomnia.json"
+    wildfire_deployment_exhaustion_emotional_numb_spouse = root / "personas" / "wildfire_deployment_exhaustion_emotional_numb_spouse.json"
+    ems_scene_assault_spirit_broken_hypervigilance = root / "personas" / "ems_scene_assault_spirit_broken_hypervigilance.json"
+    firefighter_off_duty_medical_emergency_second_guessing = root / "personas" / "firefighter_off_duty_medical_emergency_second_guessing.json"
+    probationary_firefighter_station_bullying_trapped = root / "personas" / "probationary_firefighter_station_bullying_trapped.json"
+    technical_rescue_long_extrication_emotional_numbness = root / "personas" / "technical_rescue_long_extrication_emotional_numbness.json"
+    air_ambulance_high_acuity_detachment_family_grief = root / "personas" / "air_ambulance_high_acuity_detachment_family_grief.json"
+    parent_metastatic_cancer_long_distance_careguilt = root / "personas" / "parent_metastatic_cancer_long_distance_careguilt.json"
+    spouse_oncology_diagnosis_role_reversal_overwhelm = root / "personas" / "spouse_oncology_diagnosis_role_reversal_overwhelm.json"
+    adult_child_parent_stroke_resentment_guilt_trap = root / "personas" / "adult_child_parent_stroke_resentment_guilt_trap.json"
+    sibling_psychiatric_hospitalization_family_secrecy_shame = root / "personas" / "sibling_psychiatric_hospitalization_family_secrecy_shame.json"
+    pediatric_hospital_parent_dissociation_waiting_guilt = root / "personas" / "pediatric_hospital_parent_dissociation_waiting_guilt.json"
+    partner_neurodegenerative_decline_caregiver_lonely = root / "personas" / "partner_neurodegenerative_decline_caregiver_lonely.json"
+    parent_dialysis_schedule_financial_exhaustion = root / "personas" / "parent_dialysis_schedule_financial_exhaustion.json"
+    family_disagree_illness_disclosure_sibling_fracture = root / "personas" / "family_disagree_illness_disclosure_sibling_fracture.json"
+    geographic_distance_parent_medical_emergency_guilt = root / "personas" / "geographic_distance_parent_medical_emergency_guilt.json"
+    hospice_family_decision_conflict_anticipatory_grief = root / "personas" / "hospice_family_decision_conflict_anticipatory_grief.json"
+    public_bias_harassment_transit_hypervigilance = root / "personas" / "public_bias_harassment_transit_hypervigilance.json"
+    home_vandalism_targeted_identity_safety_fear = root / "personas" / "home_vandalism_targeted_identity_safety_fear.json"
+    child_bullied_bigotry_school_parent_rage_guilt = root / "personas" / "child_bullied_bigotry_school_parent_rage_guilt.json"
+    neighbor_pattern_bias_harassment_police_report_fear = root / "personas" / "neighbor_pattern_bias_harassment_police_report_fear.json"
+    workplace_bias_incident_after_hate_event_news = root / "personas" / "workplace_bias_incident_after_hate_event_news.json"
+    community_mass_violence_news_hypervigilance_daily_life = root / "personas" / "community_mass_violence_news_hypervigilance_daily_life.json"
+    cultural_community_space_threat_message_volunteer_fear = root / "personas" / "cultural_community_space_threat_message_volunteer_fear.json"
+    interfaith_family_online_harassment_dox_fear = root / "personas" / "interfaith_family_online_harassment_dox_fear.json"
+    witness_friend_bias_motivated_assault_survivor_guilt = root / "personas" / "witness_friend_bias_motivated_assault_survivor_guilt.json"
+    public_gathering_anxiety_after_mass_violence_news = root / "personas" / "public_gathering_anxiety_after_mass_violence_news.json"
     assert passive.is_file()
     assert active.is_file()
     assert mild.is_file()
@@ -264,6 +384,126 @@ def test_persona_files_exist() -> None:
     assert avoid_talking_about_suicide_shame.is_file()
     assert postvention_support_group_fear_return.is_file()
     assert birthday_holidays_after_suicide_passive_thoughts.is_file()
+    assert coworker_threats_after_complaint_fear.is_file()
+    assert reporting_harassment_retaliation_workplace_fear.is_file()
+    assert ex_stalking_at_workplace_panic_fear.is_file()
+    assert violent_client_service_worker_safety_fear.is_file()
+    assert workplace_lockdown_threat_panic.is_file()
+    assert after_calling_police_domestic_risk_at_work.is_file()
+    assert security_alarm_breach_disbelief.is_file()
+    assert boss_downplays_safety_threats.is_file()
+    assert cyberstalking_work_chat_phishing_fear.is_file()
+    assert threatening_note_breakroom_freeze.is_file()
+    assert mortgage_foreclosure_imminent_destabilizing.is_file()
+    assert couch_surfing_transport_income_overwhelm.is_file()
+    assert shelter_line_waiting_insomnia_panic.is_file()
+    assert housing_application_rejection_deflated.is_file()
+    assert rent_increase_math_panic.is_file()
+    assert landlord_illegal_entry_fear.is_file()
+    assert locked_out_of_home_no_phone_food_panic.is_file()
+    assert deposit_refund_scam_shame_fear.is_file()
+    assert utility_water_gas_cutoff_grief.is_file()
+    assert roommate_threaten_eviction_split_rent.is_file()
+    assert doctor_dismisses_symptoms_gaslighting_fear.is_file()
+    assert er_discharge_no_followup_confusion.is_file()
+    assert waiting_diagnosis_ruminating_fear.is_file()
+    assert pre_surgery_anxiety_catastrophizing.is_file()
+    assert medication_side_effect_fear_still_taking.is_file()
+    assert lab_results_delay_hypervigilance.is_file()
+    assert chronic_flare_hiding_from_family.is_file()
+    assert disability_benefits_review_medical_anxiety.is_file()
+    assert nurse_shift_burnout_moral_injury.is_file()
+    assert needle_phobia_avoiding_care.is_file()
+    assert immigration_hearing_date_insomnia_dread.is_file()
+    assert asylum_case_wait_years_numbness.is_file()
+    assert mixed_status_family_school_forms_fear.is_file()
+    assert residency_delay_partner_abroad_lonely.is_file()
+    assert lost_immigration_documents_panic_shame.is_file()
+    assert workplace_wage_theft_fear_status_retaliation.is_file()
+    assert international_student_postgrad_timeline_panic.is_file()
+    assert airport_secondary_screening_aftermath_hypervigilance.is_file()
+    assert immigration_paperwork_scam_shame_distrust.is_file()
+    assert loved_one_detained_little_information_grief.is_file()
+    assert sextortion_blackmail_threat_shame_cycle.is_file()
+    assert intimate_content_shared_without_consent_by_ex.is_file()
+    assert romance_scam_savings_lost_shame_isolation.is_file()
+    assert elder_financial_exploitation_relative_control_fear.is_file()
+    assert authority_impersonation_phone_scam_elder_panic.is_file()
+    assert youth_online_image_pressure_fear_telling_parent.is_file()
+    assert synthetic_intimate_media_fear_reputation.is_file()
+    assert investment_fraud_trusted_group_chat_shame.is_file()
+    assert account_takeover_phishing_panic_shame.is_file()
+    assert workplace_rumor_synthetic_intimate_media_fear.is_file()
+    assert sports_betting_chase_losses_shame_partner_lies.is_file()
+    assert online_casino_losses_hidden_rent_panic.is_file()
+    assert gambling_recovery_meeting_slip_shame_isolation.is_file()
+    assert payday_loan_gambling_debt_trap_dread.is_file()
+    assert athlete_coach_body_comment_restrictive_fear.is_file()
+    assert compulsive_exercise_identity_rest_day_spiral.is_file()
+    assert endurance_training_underfueling_fatigue_low_mood.is_file()
+    assert team_performance_supplement_pressure_anxiety.is_file()
+    assert sleep_deprivation_visual_weirdness_fear_mind.is_file()
+    assert exam_stress_perceptual_oddity_fear_psychosis.is_file()
+    assert miscarriage_early_loss_isolation_shame.is_file()
+    assert recurrent_pregnancy_loss_grief_despair.is_file()
+    assert stillbirth_grief_anniversary_dread.is_file()
+    assert termination_medical_reasons_grief_secrecy.is_file()
+    assert infertility_two_week_wait_obsessing.is_file()
+    assert ivf_cycle_stimulation_exhaustion_relationship_strain.is_file()
+    assert ivf_embryo_transfer_failure_numbness.is_file()
+    assert ttc_partner_timeline_mismatch_resentment.is_file()
+    assert pregnancy_after_prior_loss_every_symptom_panic.is_file()
+    assert adoption_process_stall_ambivalent_grief.is_file()
+    assert concussion_cleared_athlete_still_symptomatic_fear.is_file()
+    assert college_concussion_academic_accommodations_shame.is_file()
+    assert workplace_head_bump_unreported_worsening_anxiety.is_file()
+    assert parent_teen_athlete_second_concussion_fear.is_file()
+    assert car_crash_mild_head_injury_insurance_rumination.is_file()
+    assert post_concussion_screen_light_noise_overwhelm.is_file()
+    assert concussion_mood_swings_partner_guilt.is_file()
+    assert concussion_word_finding_fail_meeting_humiliation.is_file()
+    assert competitive_athlete_career_end_concussion_history_grief.is_file()
+    assert exertion_headache_return_to_exercise_fear_spiral.is_file()
+    assert pain_clinic_discontinued_abrupt_reduction_anxiety.is_file()
+    assert medical_opioid_taper_chronic_pain_fear_street_thought.is_file()
+    assert post_surgery_breakthrough_refill_denied_helpless.is_file()
+    assert pain_contract_urine_monitoring_paranoia_shame.is_file()
+    assert spouse_pain_meds_addiction_accusation_grief.is_file()
+    assert young_adult_chronic_pain_er_dismissed_drug_seeking_shame.is_file()
+    assert rural_pain_specialist_access_barrier_despond.is_file()
+    assert pain_flare_disability_work_loss_passive_guilt.is_file()
+    assert kinesiophobia_reinjury_avoidance_depression_spiral.is_file()
+    assert workers_comp_pain_claim_scrutiny_isolation.is_file()
+    assert paramedic_pediatric_call_intrusive_memories.is_file()
+    assert firefighter_mayday_crew_injury_survivor_guilt.is_file()
+    assert ems_partner_same_unit_shift_conflict_home.is_file()
+    assert emergency_dispatcher_protocol_correct_still_guilty_insomnia.is_file()
+    assert wildfire_deployment_exhaustion_emotional_numb_spouse.is_file()
+    assert ems_scene_assault_spirit_broken_hypervigilance.is_file()
+    assert firefighter_off_duty_medical_emergency_second_guessing.is_file()
+    assert probationary_firefighter_station_bullying_trapped.is_file()
+    assert technical_rescue_long_extrication_emotional_numbness.is_file()
+    assert air_ambulance_high_acuity_detachment_family_grief.is_file()
+    assert parent_metastatic_cancer_long_distance_careguilt.is_file()
+    assert spouse_oncology_diagnosis_role_reversal_overwhelm.is_file()
+    assert adult_child_parent_stroke_resentment_guilt_trap.is_file()
+    assert sibling_psychiatric_hospitalization_family_secrecy_shame.is_file()
+    assert pediatric_hospital_parent_dissociation_waiting_guilt.is_file()
+    assert partner_neurodegenerative_decline_caregiver_lonely.is_file()
+    assert parent_dialysis_schedule_financial_exhaustion.is_file()
+    assert family_disagree_illness_disclosure_sibling_fracture.is_file()
+    assert geographic_distance_parent_medical_emergency_guilt.is_file()
+    assert hospice_family_decision_conflict_anticipatory_grief.is_file()
+    assert public_bias_harassment_transit_hypervigilance.is_file()
+    assert home_vandalism_targeted_identity_safety_fear.is_file()
+    assert child_bullied_bigotry_school_parent_rage_guilt.is_file()
+    assert neighbor_pattern_bias_harassment_police_report_fear.is_file()
+    assert workplace_bias_incident_after_hate_event_news.is_file()
+    assert community_mass_violence_news_hypervigilance_daily_life.is_file()
+    assert cultural_community_space_threat_message_volunteer_fear.is_file()
+    assert interfaith_family_online_harassment_dox_fear.is_file()
+    assert witness_friend_bias_motivated_assault_survivor_guilt.is_file()
+    assert public_gathering_anxiety_after_mass_violence_news.is_file()
 
 
 def test_batch_config_valid() -> None:
