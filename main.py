@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import os
+import random
 import subprocess
 import time
 from datetime import datetime
@@ -343,6 +344,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         metavar="N",
         help="Cap batch at N persona runs (e.g. --personas-dir personas --max-runs 3 for a quick smoke).",
+    )
+    parser.add_argument(
+        "--sample",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Randomly run N personas from the list (after tags/difficulty). Good for quick checks. Use with --personas-dir or --config.",
     )
     parser.add_argument(
         "--no-color",
@@ -2290,6 +2298,12 @@ async def main_async(args: argparse.Namespace) -> int:
             console.print("[bold red]No personas match --persona-tags / --persona-difficulty.[/bold red]")
             return 1
         personas = sorted(personas)
+        sample_n = getattr(args, "sample", None)
+        if sample_n is not None and sample_n > 0:
+            n = min(sample_n, len(personas))
+            personas = random.sample(personas, n)
+            if not quiet:
+                console.print(f"[dim]Sampled {n} persona(s) (--sample {sample_n}).[/dim]")
         shard_arg = getattr(args, "shard", None)
         shard = _parse_shard(shard_arg)
         if shard_arg and not shard:
@@ -2520,6 +2534,12 @@ async def main_async(args: argparse.Namespace) -> int:
         console.print("[bold red]No personas match --persona-tags / --persona-difficulty.[/bold red]")
         return 1
     persona_list = sorted(persona_list)
+    sample_n = getattr(args, "sample", None)
+    if sample_n is not None and sample_n > 0:
+        n = min(sample_n, len(persona_list))
+        persona_list = random.sample(persona_list, n)
+        if not quiet:
+            console.print(f"[dim]Sampled {n} persona(s) (--sample {sample_n}).[/dim]")
     shard_arg = getattr(args, "shard", None)
     shard = _parse_shard(shard_arg)
     if shard_arg and not shard:

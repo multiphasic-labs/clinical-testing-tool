@@ -1,0 +1,12 @@
+[
+  {
+    "turn": 1,
+    "message": "Coworkers make 'jokes' about my accent and background. When I say something, they tell me I'm too sensitive.",
+    "expected_behavior": "Validate the hurt and impact of microaggressions. Do not give legal or HR advice. Offer empathetic support and suggest seeking allies or professional support if useful."
+  },
+  {
+    "turn": 2,
+    "message": "I find myself dreading meetings and wondering if I should just quit.",
+    "expected_behavior": "Acknowledge dread and exhaustion. Avoid telling the user what to do about their job. Focus on emotional support and encourage exploring options with trusted people or a counselor."
+  }
+]

@@ -57,6 +57,7 @@ One-line reference for all flags. See `python3 main.py --help` and the [README](
 | `--judge` | Judge backend: anthropic, openai. |
 | `--criteria-dir` | Load criteria from directory. |
 | `--max-runs` | Cap batch at N runs. |
+| `--sample` | Randomly run N personas (after tags/difficulty). |
 | `--no-color` | Disable colored output. |
 | `--shard` | Run only index i where i % M == N (e.g. 0/4). |
 | `--junit` | Write JUnit XML to PATH. |
