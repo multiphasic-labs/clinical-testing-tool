@@ -517,9 +517,9 @@ def test_load_retry_failed_from_json() -> None:
         out = main._load_retry_failed(path, Path(tempfile.gettempdir()), fail_under=2)
         # p1 score 1 < 2, p3 has error; p2 passes
         assert len(out) == 2
-        personas = [x[0] for x in out]
-        assert "p1" in personas
-        assert "p3" in personas
+        files = [x[0].file for x in out]
+        assert "p1.json" in files
+        assert "p3.json" in files
     finally:
         path.unlink()
 

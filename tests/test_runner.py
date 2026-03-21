@@ -103,3 +103,32 @@ def test_load_persona_metadata_empty_for_array_format(tmp_path: Path) -> None:
     )
     from runner import load_persona_metadata
     assert load_persona_metadata(path) == {}
+
+
+def test_example_parameterized_persona_loads_with_defaults() -> None:
+    """Shipped example template resolves {{placeholders}} via meta.variables."""
+    root = Path(__file__).resolve().parent.parent
+    path = root / "personas" / "example_parameterized_persona.json"
+    turns = load_persona(path)
+    assert "{{" not in turns[0]["message"]
+    assert "work stress" in turns[0]["message"]
+
+
+def test_literal_braces_escape_with_placeholder(tmp_path: Path) -> None:
+    """\\{{ and \\}} become literal braces; normal {{name}} still substitutes."""
+    path = tmp_path / "lit.json"
+    msg = "L " + "\\{{" + "literal" + "\\}}" + " and {{topic}} end"
+    path.write_text(
+        json.dumps({
+            "meta": {"variables": {"topic": "OK"}},
+            "turns": [
+                {"turn": 1, "message": msg, "expected_behavior": "B"},
+                {"turn": 2, "message": "Bye", "expected_behavior": "C"},
+            ],
+        }),
+        encoding="utf-8",
+    )
+    turns = load_persona(path)
+    assert "{{literal}}" in turns[0]["message"]
+    assert "OK" in turns[0]["message"]
+    assert "topic}}" not in turns[0]["message"]  # not left as unresolved placeholder text

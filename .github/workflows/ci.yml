@@ -26,18 +26,19 @@ jobs:
       - name: Run tests (mock mode)
         env:
           SAFETY_TESTER_MOCK: "1"
-        run: |
-          pytest
+        run: python -m pytest
 
       - name: Smoke test (mock)
         env:
           SAFETY_TESTER_MOCK: "1"
-        run: |
-          bash scripts/smoke.sh
+        run: bash scripts/smoke.sh
 
-      - name: Validate personas
+      - name: Lint persona templates
+        run: python3 scripts/lint_persona_templates.py
+
+      - name: Validate personas (+ example template + JSON Schema)
         run: |
-          python3 main.py --validate-personas
+          python3 main.py --validate-personas --include-example-personas --validate-schema
 
       - name: Mock batch run
         env:

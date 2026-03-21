@@ -1,43 +1,39 @@
 # Changelog
 
-All notable changes to this project are documented here.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+All notable changes to **Mental Health Safety Tester** are documented here.
 
 ## [Unreleased]
 
 ### Added
 
-- **FAQ**: [docs/FAQ.md](docs/FAQ.md) for "How do I add a new criterion?", "Can I use a different judge model?", "Why do scores vary?", "How do I run only crisis personas?", and more.
-- **Release checklist**: CONTRIBUTING.md section for bumping version, CHANGELOG, tagging, and optional release artifacts.
-- **Integration tests**: `tests/test_integration_report_only_and_cache.py` for `--report-only` (single file and directory) and `--cache-dir` run completion.
-- **Profile**: `--profile` prints SUT vs judge timing per run and total batch time.
-- **NDJSON**: `--ndjson` prints one JSON object per run to stdout for piping to `jq` or other tools.
-- **Batch report HTML**: With `--batch-summary`, `batch_report_TIMESTAMP.html` is written with a table and expandable rows (criterion_scores, severity); included in compliance export.
-- **Weighted final score**: `--criterion-weights CID=W,...` (e.g. `crisis_urgency=2,no_diagnosis=1`) or config `criterion_weights` for weighted average final score instead of min.
-- **Severity**: Persona `meta.severity` shown in batch summary table and in batch audit/compliance export.
-- **Redact**: `--redact` replaces conversation content in saved result JSON with `[redacted]` for compliance sharing.
+- **Parameterized personas**: `{{variable_name}}` placeholders in `message` / `expected_behavior`, with defaults in `meta.variables`, per-batch `variables` in `batch_config.json`, and CLI `--persona-vars-file` / `--persona-var`.
+- **Display names** for runs: `stem`, `stem__id`, or `stem__key=value_...`.
+- **SUT cache** keys include template variables (and optional instance id).
+- **Batch summary / audit / CSV / JUnit**: `persona_source_file`, `persona_variables`, `persona_instance_id` where applicable; CSV columns `persona_variables_json`, etc.
+- **`--dry-run`**: prints each planned run with **resolved variables** (file → id → vars → display name).
+- **`--validate-personas --include-example-personas`**: validates template examples excluded from discovery (e.g. `example_parameterized_persona.json`).
+- **Literal braces**: in JSON strings, use `\\{{` and `\\}}` for literal `{{` / `}}` (see `docs/PERSONA_SCHEMA.md`).
+- **`scripts/lint_persona_templates.py`**: optional CI lint for `meta.variables` when placeholders exist (`--strict` for full key coverage).
+- **Saved result JSON** (`save_result_json`): includes `persona_source_file`, `persona_variables`, `persona_instance_id` when applicable.
 
-## [0.1.0] - 2025-03
+### Fixed
 
-### Added
+- **`--personas-dir`**: bare filenames (e.g. `foo.json`) now resolve against the directory passed to `--personas-dir`, not only `personas/`.
 
-- CLI for scripted mental health safety testing: run persona conversations against a chatbot (SUT), score with an LLM judge, save JSON results.
-- Personas: passive/active ideation, mild anxiety, bad day vent, diagnosis seeking, lonely venting, overwhelmed, substance cope, self-harm venting, grief, panic, medication question, caretaker burnout, teen stress, eating distress, relationship abuse, vague physical anxiety, teen crisis, workplace burnout, perinatal worry, identity stress, sleep/low mood, youth substance, chronic pain/mood, disengage (sad path).
-- Pluggable SUT backends: Anthropic, OpenAI, custom HTTP API.
-- Multiple judge criteria: crisis urgency, no diagnosis, no normalizing self-harm, escalation to human, no promises or specifics.
-- Batch runs via config or `--personas-dir`; `--parallel N`, `--max-runs N`, `--shard N/M`; stable alphabetical persona ordering.
-- Output: JSON results, optional Markdown/HTML reports, batch summary (JSON/MD/CSV), JUnit XML, audit JSON; `--no-color` for CI.
-- Config: optional `safety-tester-config.json` for defaults (`sut_model`, `judge_model`, `output_dir`, `criteria`, `max_runs`, `run_timeout`).
-- Baseline comparison and save; retry failed runs; run history (JSONL); failure/success webhooks (Slack-friendly).
-- Docker support; health check; version from `pyproject.toml`; persona schema validation; results index and trend scripts; compliance export.
-- Mock mode by default; `--live` for real API. Rate limiting and run timeout; judge and SUT retries with clear 401/403 errors.
-- Persona metadata: optional `meta` in persona JSON (e.g. author, severity); surfaced in batch summary and compliance export.
-- Progress bar for batch runs when not `--quiet`.
-- Documentation: README, RUNBOOK, METHODOLOGY, DEPLOYMENT, CUSTOM_SUT_API, PERSONA_SCHEMA.
+### Documentation
 
-### Security
+- `docs/PERSONA_SCHEMA.md`: placeholders, merge order, escape rules, batch object shape, retry fields.
+- `docs/PARAMETERIZED_PERSONAS.md`: copy-paste examples and **lint policy** (default vs `--strict`).
+- README: parameterized personas overview and merge-order table.
 
-- No real user data; synthetic personas only. See SECURITY.md.
+### Tooling
 
-[0.1.0]: https://github.com/your-org/mental-health-tester/releases/tag/v0.1.0
+- **CI** (`.github/workflows/ci.yml`): runs `pytest`, smoke script, `lint_persona_templates.py`, `--validate-personas --include-example-personas --validate-schema`, and a mock batch config run (repo root = package).
+- **Scheduled workflow** (`scheduled.yml`): aligned with the same repo layout (no nested `cd`).
+- **`--list-personas --templates`**: list only files with `{{placeholder}}` syntax; includes `example_parameterized_persona.json`.
+- **`--validate-schema`**: validate raw JSON against `schemas/persona.json` (requires `jsonschema`).
+- **Batch HTML report**: columns for source file, template variables JSON, and instance id when present.
+
+### Tests
+
+- **Golden-shape** test for saved result JSON keys on a parameterized mock run (`tests/test_golden_parameterized_result.py`).
