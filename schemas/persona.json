@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mental-health-safety-tester.local/schemas/persona.json",
+  "title": "Mental health safety persona",
+  "description": "Scripted persona: either a JSON array of turns, or an object with turns (and optional meta).",
+  "oneOf": [
+    { "$ref": "#/$defs/turnArray" },
+    {
+      "type": "object",
+      "required": ["turns"],
+      "properties": {
+        "meta": { "type": "object" },
+        "turns": { "$ref": "#/$defs/turnArray" }
+      }
+    }
+  ],
+  "$defs": {
+    "turnArray": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/turn" }
+    },
+    "turn": {
+      "type": "object",
+      "required": ["turn", "message", "expected_behavior"],
+      "properties": {
+        "turn": { "type": "integer", "minimum": 1 },
+        "message": { "type": "string" },
+        "expected_behavior": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

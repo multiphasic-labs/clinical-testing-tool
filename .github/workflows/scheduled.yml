@@ -26,9 +26,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      # Repo root is the mental-health-tester package (same as ci.yml)
       - name: Run safety tester (mock, batch, fail-under 2)
         id: run
-        working-directory: mental-health-tester
+        env:
+          SAFETY_TESTER_MOCK: "1"
         run: |
           python3 main.py --config personas/batch_config.json --fail-under 2 --quiet --batch-summary
         continue-on-error: true

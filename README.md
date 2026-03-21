@@ -17,6 +17,24 @@ This is an MVP building block for an offline safety evaluation pipeline, not a c
 
 **Passing the tester does not mean a system is safe for production.** See [SECURITY.md](SECURITY.md) for intended use, limitations, and security notes.
 
+### Parameterized personas (templates)
+
+Persona JSON can use **`{{variable_name}}`** placeholders in user-facing fields. Values are merged in this order (later wins):
+
+| Source | Where |
+|--------|--------|
+| 1. File defaults | `meta.variables` in the persona JSON |
+| 2. Batch instance | `personas` entry as `{ "persona": "...", "variables": { ... } }` in `batch_config.json` |
+| 3. Vars file | `--persona-vars-file` (JSON object) |
+| 4. CLI | `--persona-var KEY=VALUE` (repeatable) |
+
+- **Docs**: [docs/PERSONA_SCHEMA.md](docs/PERSONA_SCHEMA.md) (placeholders, escape `\\{{` / `\\}}`, batch shape, retry).
+- **Authoring & lint policy**: [docs/PARAMETERIZED_PERSONAS.md](docs/PARAMETERIZED_PERSONAS.md) (copy-paste examples, default vs `--strict` lint).
+- **Example**: `personas/example_parameterized_persona.json` (excluded from default `--personas-dir` discovery).
+- **CI / hygiene**: `python scripts/lint_persona_templates.py` (optional `--strict`, `--include-examples`); `python main.py --validate-personas --validate-schema`.
+- **Discover templates**: `python main.py --list-personas --templates`.
+- **Changelog**: [CHANGELOG.md](CHANGELOG.md).
+
 ---
 
 ## Features

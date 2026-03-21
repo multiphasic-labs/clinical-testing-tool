@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import random
@@ -7,7 +8,7 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TypeVar
 
 from rich import box
 from rich.console import Console
@@ -18,10 +19,68 @@ from rich.text import Text
 
 from runner import ConversationError, load_persona, load_persona_metadata, run_conversation
 from judge import CRITERIA, get_criteria_specs, score_all_criteria
+from persona_spec import (
+    PersonaRunSpec,
+    display_name_for_spec,
+    merge_cli_vars_into_specs,
+    normalize_persona_config_entry,
+    spec_sort_key,
+)
 from sut_backends import get_backend
 
 
 console = Console()
+
+_T_shard = TypeVar("_T_shard")
+
+
+def _persona_cache_key_fragment(
+    persona_path: Path,
+    system_prompt: Optional[str],
+    variables: Optional[Dict[str, str]],
+    instance_id: Optional[str],
+) -> str:
+    """Stable short hash for SUT conversation cache (path + prompt + template vars)."""
+    payload = json.dumps(
+        {
+            "path": str(persona_path.resolve()),
+            "system_prompt": system_prompt or "",
+            "variables": sorted((variables or {}).items()),
+            "instance_id": instance_id or "",
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:24]
+
+
+def _summary_tag_lookup_filename(item: Dict[str, Any]) -> str:
+    """Filename key for persona_tags.json when display name is parameterized (stem__vars)."""
+    psf = item.get("persona_source_file")
+    if isinstance(psf, str) and psf.strip():
+        n = Path(psf.strip()).name
+        return n if n.endswith(".json") else f"{n}.json"
+    pname = (item.get("persona_name") or "").strip()
+    if "__" in pname:
+        stem = pname.split("__", 1)[0]
+        return stem + ".json" if not stem.endswith(".json") else stem
+    return pname if pname.endswith(".json") else f"{pname}.json"
+
+
+def _raw_persona_entry_matches_filter(entry: Any, allowed: set) -> bool:
+    """--personas filter: match config entry (string or {persona,file}) to allowed names."""
+    if isinstance(entry, str):
+        p = entry.strip()
+        if p in allowed:
+            return True
+        stem = Path(p).stem if "." in p else p
+        return stem in allowed or p.replace(".json", "") in allowed
+    if isinstance(entry, dict):
+        fk = (entry.get("persona") or entry.get("file") or "").strip()
+        if fk in allowed:
+            return True
+        stem = Path(fk).stem if fk else ""
+        return stem in allowed or fk.replace(".json", "") in allowed if fk else False
+    return False
 
 
 def parse_args() -> argparse.Namespace:
@@ -108,6 +167,21 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated persona names to run. With --config: filter to these; without: run these as a batch.",
     )
     parser.add_argument(
+        "--persona-var",
+        action="append",
+        default=None,
+        metavar="KEY=VALUE",
+        help="Set a template variable for {{KEY}} placeholders in persona text (repeatable). Merged with "
+        "meta.variables in the file; overrides batch instance variables. Use with --persona-vars-file for defaults.",
+    )
+    parser.add_argument(
+        "--persona-vars-file",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="JSON object of string key -> string values for persona placeholders. Overridden by repeated --persona-var.",
+    )
+    parser.add_argument(
         "--personas-dir",
         type=str,
         default=None,
@@ -130,6 +204,17 @@ def parse_args() -> argparse.Namespace:
         "--validate-personas",
         action="store_true",
         help="Load each persona in personas/ (or --personas-dir), validate schema, and exit 0 if all OK.",
+    )
+    parser.add_argument(
+        "--include-example-personas",
+        action="store_true",
+        help="With --validate-personas: also validate example/template JSON excluded from discovery "
+        "(e.g. example_parameterized_persona.json).",
+    )
+    parser.add_argument(
+        "--validate-schema",
+        action="store_true",
+        help="With --validate-personas: validate raw JSON against schemas/persona.json (requires jsonschema).",
     )
     parser.add_argument(
         "--log",
@@ -166,6 +251,11 @@ def parse_args() -> argparse.Namespace:
         "--list-personas",
         action="store_true",
         help="List available persona files and exit.",
+    )
+    parser.add_argument(
+        "--templates",
+        action="store_true",
+        help="With --list-personas: only list persona files that contain {{placeholder}} syntax.",
     )
     parser.add_argument(
         "--list-criteria",
@@ -511,7 +601,7 @@ def _parse_shard(shard_arg: Optional[str]) -> Optional[Tuple[int, int]]:
         return None
 
 
-def _apply_shard(items: List[str], shard: Optional[Tuple[int, int]]) -> List[str]:
+def _apply_shard(items: List[_T_shard], shard: Optional[Tuple[int, int]]) -> List[_T_shard]:
     """Filter items to indices i where i % M == N. Personas should already be sorted."""
     if not shard:
         return items
@@ -519,18 +609,173 @@ def _apply_shard(items: List[str], shard: Optional[Tuple[int, int]]) -> List[str
     return [items[i] for i in range(len(items)) if i % m == n]
 
 
-def resolve_persona_path(persona_arg: str) -> Path:
+def resolve_persona_path(persona_arg: str, search_dir: Optional[Path] = None) -> Path:
+    """
+    Resolve a persona path. Absolute/existing paths win; then search_dir/filename;
+    then project personas/filename.
+    """
     candidate = Path(persona_arg)
     if candidate.is_file():
         return candidate
 
+    if search_dir is not None:
+        in_dir = search_dir / persona_arg
+        if in_dir.is_file():
+            return in_dir.resolve()
+
     project_root = Path(__file__).resolve().parent
-    persona_path = project_root / "personas" / persona_arg
-    return persona_path
+    return project_root / "personas" / persona_arg
 
 
 # Names of JSON files that are not persona scripts (excluded from --personas-dir discovery).
-_NON_PERSONA_JSON = {"batch_config.json", "example_criterion.json", "persona_tags.json"}
+_NON_PERSONA_JSON = {
+    "batch_config.json",
+    "example_criterion.json",
+    "persona_tags.json",
+    "example_parameterized_persona.json",
+}
+
+_PERSONA_JSON_SCHEMA_CACHE: Optional[Dict[str, Any]] = None
+
+
+def _get_persona_json_schema() -> Optional[Dict[str, Any]]:
+    """Load and cache schemas/persona.json for --validate-schema."""
+    global _PERSONA_JSON_SCHEMA_CACHE
+    if _PERSONA_JSON_SCHEMA_CACHE is not None:
+        return _PERSONA_JSON_SCHEMA_CACHE
+    path = Path(__file__).resolve().parent / "schemas" / "persona.json"
+    if not path.is_file():
+        return None
+    try:
+        _PERSONA_JSON_SCHEMA_CACHE = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return _PERSONA_JSON_SCHEMA_CACHE
+
+
+def _validate_persona_json_schema_instance(data: Any) -> Optional[str]:
+    """Return error message if JSON Schema validation fails, None if OK."""
+    try:
+        import jsonschema
+    except ImportError:
+        return "jsonschema not installed (pip install jsonschema)"
+    schema = _get_persona_json_schema()
+    if not schema:
+        return "schemas/persona.json not found"
+    try:
+        jsonschema.validate(instance=data, schema=schema)
+    except jsonschema.ValidationError as e:
+        return str(e.message)
+    except jsonschema.SchemaError as e:
+        return f"Invalid schema file: {e}"
+    return None
+
+
+def _persona_file_has_template_placeholders(path: Path) -> bool:
+    """True if message/expected_behavior contain {{placeholder}} tokens."""
+    from runner import collect_persona_placeholders, _read_persona_json, _split_root_persona_data
+
+    try:
+        data = _read_persona_json(path)
+        turns, _ = _split_root_persona_data(data)
+        return len(collect_persona_placeholders(turns)) > 0
+    except Exception:
+        return False
+
+
+def _parse_persona_var_cli(args: argparse.Namespace) -> Dict[str, str]:
+    """Merge --persona-vars-file JSON with --persona-var KEY=VALUE (CLI wins)."""
+    out: Dict[str, str] = {}
+    path = getattr(args, "persona_vars_file", None)
+    if path:
+        p = Path(path)
+        if p.is_file():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    for k, v in data.items():
+                        out[str(k)] = str(v)
+            except (json.JSONDecodeError, OSError) as e:
+                raise ValueError(f"--persona-vars-file: {e}") from e
+        else:
+            raise ValueError(f"--persona-vars-file not found: {p}")
+    raw = getattr(args, "persona_var", None) or []
+    for item in raw:
+        if "=" not in str(item):
+            continue
+        k, _, v = str(item).partition("=")
+        k, v = k.strip(), v.strip()
+        if k:
+            out[k] = v
+    return out
+
+
+def _filter_specs_by_personas_arg(
+    specs: List[PersonaRunSpec],
+    personas_override: Optional[List[str]],
+) -> List[PersonaRunSpec]:
+    """Filter PersonaRunSpec list to names in --personas (match filename or stem)."""
+    if not personas_override:
+        return specs
+    allowed = {p.strip() for p in personas_override if p.strip()}
+    out: List[PersonaRunSpec] = []
+    for s in specs:
+        f = s.file
+        stem = Path(f).stem
+        stem_json = f"{stem}.json"
+        ok = False
+        for a in allowed:
+            if a == f or a == stem or a == stem_json:
+                ok = True
+                break
+        if ok:
+            out.append(s)
+    return out
+
+
+def _filter_specs_by_tags(
+    specs: List[PersonaRunSpec],
+    tags_requested: List[str],
+    tags_dir: Path,
+) -> List[PersonaRunSpec]:
+    """Keep only specs whose persona file has at least one requested tag."""
+    if not tags_requested:
+        return specs
+    tag_map = _load_persona_tags(tags_dir)
+    requested = {t.strip().lower() for t in tags_requested if t.strip()}
+    if not requested:
+        return specs
+    out: List[PersonaRunSpec] = []
+    for s in specs:
+        key = s.file if s.file.endswith(".json") else f"{s.file}.json"
+        tags = tag_map.get(key) or tag_map.get(Path(s.file).name) or []
+        if any((t or "").lower() in requested for t in tags):
+            out.append(s)
+    return out
+
+
+def _filter_specs_by_difficulty(
+    specs: List[PersonaRunSpec],
+    difficulty: Optional[str],
+    base_dir: Path,
+) -> List[PersonaRunSpec]:
+    """Same as _filter_personas_by_difficulty but for PersonaRunSpec list."""
+    if not difficulty:
+        return specs
+    diff = difficulty.strip().lower()
+    out: List[PersonaRunSpec] = []
+    for s in specs:
+        path = base_dir / s.file if (base_dir / s.file).is_file() else resolve_persona_path(s.file, search_dir=base_dir)
+        if not path.is_file():
+            path = resolve_persona_path(s.file)
+        try:
+            meta = load_persona_metadata(path)
+            d = (meta.get("difficulty") or "").strip().lower()
+            if not d or d == diff:
+                out.append(s)
+        except Exception:
+            out.append(s)
+    return out
 
 
 def _discover_personas_from_dir(dir_path: Path) -> List[str]:
@@ -670,6 +915,9 @@ def save_result_json(
     run_id: Optional[str] = None,
     redact: bool = False,
     criterion_weights: Optional[Dict[str, float]] = None,
+    persona_source_file: Optional[str] = None,
+    persona_variables: Optional[Dict[str, str]] = None,
+    persona_instance_id: Optional[str] = None,
 ) -> Path:
     if timestamp is None:
         timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -707,6 +955,12 @@ def save_result_json(
     }
     if run_id:
         payload["run_id"] = run_id
+    if persona_source_file:
+        payload["persona_source_file"] = persona_source_file
+    if persona_variables is not None:
+        payload["persona_variables"] = persona_variables
+    if persona_instance_id is not None:
+        payload["persona_instance_id"] = persona_instance_id
     try:
         payload["tool_version"] = _get_version()
     except Exception:
@@ -890,9 +1144,17 @@ def print_results(judge_result: Dict[str, Any]) -> None:
         console.print()
 
 
-def _mock_conversation(persona_name: str) -> Dict[str, Any]:
-    persona_path = resolve_persona_path(persona_name)
-    persona = load_persona(persona_path)
+def _mock_conversation(
+    persona_name: str,
+    persona_variables: Optional[Dict[str, str]] = None,
+    persona_display_name: Optional[str] = None,
+    persona_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    persona_path = persona_path or resolve_persona_path(persona_name)
+    persona = load_persona(persona_path, variables=persona_variables)
+    display = persona_display_name or display_name_for_spec(
+        PersonaRunSpec(persona_path.name, dict(persona_variables or {}), None)
+    )
 
     turns: List[Dict[str, Any]] = []
     for turn in persona:
@@ -923,7 +1185,7 @@ def _mock_conversation(persona_name: str) -> Dict[str, Any]:
         )
 
     return {
-        "persona_name": persona_path.stem,
+        "persona_name": display,
         "turns": turns,
         "conversation_for_judge": conversation_for_judge,
     }
@@ -984,29 +1246,39 @@ async def run_single_persona(
     log_format: str = "text",
     sut_timeout: Optional[int] = None,
     judge_timeout: Optional[int] = None,
+    persona_variables: Optional[Dict[str, str]] = None,
+    persona_instance_id: Optional[str] = None,
+    persona_search_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    persona_path = resolve_persona_path(persona_name)
+    persona_path = resolve_persona_path(persona_name, search_dir=persona_search_dir)
+    vars_merged = dict(persona_variables or {})
+    spec = PersonaRunSpec(persona_path.name, vars_merged, persona_instance_id)
+    persona_display = display_name_for_spec(spec)
     sut_seconds: Optional[float] = None
     judge_seconds: Optional[float] = None
 
     if mock:
-        conversation = _mock_conversation(persona_name)
+        conversation = _mock_conversation(
+            persona_name,
+            persona_variables=vars_merged,
+            persona_display_name=persona_display,
+            persona_path=persona_path,
+        )
         if profile:
             sut_seconds = 0.0
             judge_seconds = 0.0
     else:
         cache_hit = False
+        cache_key = _persona_cache_key_fragment(persona_path, system_prompt, vars_merged, persona_instance_id)
         if cache_dir and cache_dir.is_dir():
-            import hashlib
-            key = hashlib.sha256((str(persona_path.resolve()) + (system_prompt or "")).encode()).hexdigest()[:24]
-            cache_file = cache_dir / f"{key}.json"
+            cache_file = cache_dir / f"{cache_key}.json"
             if cache_file.is_file():
                 try:
                     cached = json.loads(cache_file.read_text(encoding="utf-8"))
                     conv_judge = cached.get("conversation_for_judge")
                     if isinstance(conv_judge, list):
                         conversation = {
-                            "persona_name": persona_path.stem,
+                            "persona_name": persona_display,
                             "turns": [],
                             "conversation_for_judge": conv_judge,
                         }
@@ -1023,6 +1295,8 @@ async def run_single_persona(
                     system_prompt=system_prompt,
                     sut_backend=sut_backend,
                     sut_options=sut_options,
+                    variables=vars_merged,
+                    persona_display_name=persona_display,
                 )
                 if sut_timeout and sut_timeout > 0:
                     conversation = await asyncio.wait_for(conv_coro, timeout=float(sut_timeout))
@@ -1032,9 +1306,7 @@ async def run_single_persona(
                     sut_seconds = time.perf_counter() - _t0
                 if cache_dir and cache_dir.is_dir():
                     cache_dir.mkdir(parents=True, exist_ok=True)
-                    import hashlib
-                    key = hashlib.sha256((str(persona_path.resolve()) + (system_prompt or "")).encode()).hexdigest()[:24]
-                    cache_file = cache_dir / f"{key}.json"
+                    cache_file = cache_dir / f"{cache_key}.json"
                     try:
                         cache_file.write_text(
                             json.dumps({"conversation_for_judge": conversation["conversation_for_judge"]}, indent=2),
@@ -1044,19 +1316,31 @@ async def run_single_persona(
                         pass
             except asyncio.TimeoutError:
                 if log_format == "jsonl":
-                    _log_line(log_path, {"timestamp_utc": datetime.utcnow().isoformat() + "Z", "persona_name": persona_name, "error": "SUTTimeout"}, log_format)
+                    _log_line(log_path, {"timestamp_utc": datetime.utcnow().isoformat() + "Z", "persona_name": persona_display, "error": "SUTTimeout"}, log_format)
                 else:
-                    _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{persona_name}\terror=SUTTimeout", log_format)
-                return {"persona_name": persona_name, "error": f"SUT timed out after {sut_timeout}s"}
+                    _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{persona_display}\terror=SUTTimeout", log_format)
+                return {
+                    "persona_name": persona_display,
+                    "error": f"SUT timed out after {sut_timeout}s",
+                    "persona_source_file": persona_path.name,
+                    "persona_variables": vars_merged,
+                    "persona_instance_id": persona_instance_id,
+                }
             except ConversationError as e:
-                console.print(f"[bold red]Conversation error for persona '{persona_name}':[/bold red] {e}")
+                console.print(f"[bold red]Conversation error for persona '{persona_display}':[/bold red] {e}")
                 if log_format == "jsonl":
-                    _log_line(log_path, {"timestamp_utc": datetime.utcnow().isoformat() + "Z", "persona_name": persona_name, "error": "ConversationError", "message": str(e)}, log_format)
+                    _log_line(log_path, {"timestamp_utc": datetime.utcnow().isoformat() + "Z", "persona_name": persona_display, "error": "ConversationError", "message": str(e)}, log_format)
                 else:
-                    _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{persona_name}\terror=ConversationError\t{e}", log_format)
+                    _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{persona_display}\terror=ConversationError\t{e}", log_format)
                 if history_path:
-                    _append_history(history_path, {"timestamp_utc": datetime.utcnow().strftime("%Y%m%dT%H%M%SZ"), "persona_name": persona_name, "error": str(e)})
-                return {"persona_name": persona_name, "error": str(e)}
+                    _append_history(history_path, {"timestamp_utc": datetime.utcnow().strftime("%Y%m%dT%H%M%SZ"), "persona_name": persona_display, "error": str(e)})
+                return {
+                    "persona_name": persona_display,
+                    "error": str(e),
+                    "persona_source_file": persona_path.name,
+                    "persona_variables": vars_merged,
+                    "persona_instance_id": persona_instance_id,
+                }
 
     if not quiet:
         console.rule(f"[bold cyan]Persona: {conversation.get('persona_name', persona_name)}[/bold cyan]")
@@ -1087,23 +1371,35 @@ async def run_single_persona(
             if profile:
                 judge_seconds = time.perf_counter() - _t0
         except asyncio.TimeoutError:
-            pname = conversation.get("persona_name", persona_name)
+            pname = conversation.get("persona_name", persona_display)
             console.print(f"[bold red]Judge timed out for persona '{pname}'.[/bold red]")
             if log_format == "jsonl":
                 _log_line(log_path, {"timestamp_utc": datetime.utcnow().isoformat() + "Z", "persona_name": pname, "error": "JudgeTimeout"}, log_format)
             else:
                 _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{pname}\terror=JudgeTimeout", log_format)
-            return {"persona_name": pname, "error": "Judge timed out"}
+            return {
+                "persona_name": pname,
+                "error": "Judge timed out",
+                "persona_source_file": persona_path.name,
+                "persona_variables": vars_merged,
+                "persona_instance_id": persona_instance_id,
+            }
         except Exception as e:
-            console.print(f"[bold red]Judge error for persona '{persona_name}':[/bold red] {e}")
-            pname = conversation.get("persona_name", persona_name)
+            console.print(f"[bold red]Judge error for persona '{persona_display}':[/bold red] {e}")
+            pname = conversation.get("persona_name", persona_display)
             if log_format == "jsonl":
                 _log_line(log_path, {"timestamp_utc": datetime.utcnow().isoformat() + "Z", "persona_name": pname, "error": "JudgeError", "message": str(e)}, log_format)
             else:
                 _log_line(log_path, f"{datetime.utcnow().isoformat()}Z\t{pname}\terror=JudgeError\t{e}", log_format)
             if history_path:
                 _append_history(history_path, {"timestamp_utc": datetime.utcnow().strftime("%Y%m%dT%H%M%SZ"), "persona_name": pname, "error": str(e)})
-            return {"persona_name": pname, "error": str(e)}
+            return {
+                "persona_name": pname,
+                "error": str(e),
+                "persona_source_file": persona_path.name,
+                "persona_variables": vars_merged,
+                "persona_instance_id": persona_instance_id,
+            }
 
     if verbose:
         console.print("\n[bold magenta]Raw judge response(s):[/bold magenta]")
@@ -1117,7 +1413,7 @@ async def run_single_persona(
             print_results(r)
 
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    persona_display = conversation.get("persona_name", persona_name)
+    persona_display = conversation.get("persona_name", persona_display)
 
     result_path = save_result_json(
         results_dir=output_dir,
@@ -1129,6 +1425,9 @@ async def run_single_persona(
         run_id=run_id,
         redact=redact,
         criterion_weights=criterion_weights,
+        persona_source_file=persona_path.name,
+        persona_variables=vars_merged,
+        persona_instance_id=persona_instance_id,
     )
 
     if write_md:
@@ -1177,6 +1476,9 @@ async def run_single_persona(
         "score": final_score,
         "criterion_scores": criterion_scores,
         "result_path": str(result_path),
+        "persona_source_file": persona_path.name,
+        "persona_variables": vars_merged,
+        "persona_instance_id": persona_instance_id,
     }
     if run_label is not None:
         out["run_label"] = run_label
@@ -1190,7 +1492,16 @@ async def run_single_persona(
     except Exception:
         pass
     if history_path:
-        record = {"timestamp_utc": timestamp, "persona_name": persona_display, "score": final_score, "criterion_scores": criterion_scores, "result_path": str(result_path)}
+        record = {
+            "timestamp_utc": timestamp,
+            "persona_name": persona_display,
+            "score": final_score,
+            "criterion_scores": criterion_scores,
+            "result_path": str(result_path),
+            "persona_source_file": persona_path.name,
+            "persona_variables": vars_merged,
+            "persona_instance_id": persona_instance_id,
+        }
         if run_label:
             record["run_label"] = run_label
         _append_history(history_path, record)
@@ -1351,7 +1662,7 @@ def _check_baseline(
 
 
 async def _run_one(
-    persona_name: str,
+    persona_spec: PersonaRunSpec,
     args: argparse.Namespace,
     sut_model: str,
     judge_model: str,
@@ -1381,11 +1692,14 @@ async def _run_one(
     log_format: str = "text",
     sut_timeout: Optional[int] = None,
     judge_timeout: Optional[int] = None,
+    persona_search_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run a single persona (optionally under a semaphore for parallel batch)."""
+    display = display_name_for_spec(persona_spec)
+
     async def _do() -> Dict[str, Any]:
         out = await run_single_persona(
-            persona_name,
+            persona_spec.file,
             verbose=args.verbose,
             sut_model=sut_model,
             judge_model=judge_model,
@@ -1412,6 +1726,9 @@ async def _run_one(
             log_format=log_format,
             sut_timeout=sut_timeout,
             judge_timeout=judge_timeout,
+            persona_variables=persona_spec.variables,
+            persona_instance_id=persona_spec.instance_id,
+            persona_search_dir=persona_search_dir,
         )
         if on_complete_msg:
             console.print(on_complete_msg)
@@ -1422,11 +1739,14 @@ async def _run_one(
             return await asyncio.wait_for(coro, timeout=float(run_timeout))
         except asyncio.TimeoutError:
             return {
-                "persona_name": persona_name,
+                "persona_name": display,
                 "run_label": run_label,
                 "error": f"Run timed out after {run_timeout}s",
                 "score": None,
                 "criterion_scores": {},
+                "persona_source_file": Path(persona_spec.file).name,
+                "persona_variables": dict(persona_spec.variables),
+                "persona_instance_id": persona_spec.instance_id,
             }
     if semaphore:
         async with semaphore:
@@ -1501,12 +1821,34 @@ def _notify_success(
         pass
 
 
+def _retry_row_to_spec(row: Dict[str, Any]) -> Optional[PersonaRunSpec]:
+    """Rebuild PersonaRunSpec from a batch summary row (supports legacy rows without persona_source_file)."""
+    display = (row.get("persona") or "").strip()
+    psf = (row.get("persona_source_file") or "").strip()
+    pvars = row.get("persona_variables")
+    if not isinstance(pvars, dict):
+        pvars = {}
+    pvars = {str(k): str(v) for k, v in pvars.items()}
+    iid = row.get("persona_instance_id")
+    if iid is None or (isinstance(iid, str) and not str(iid).strip()):
+        iid_str: Optional[str] = None
+    else:
+        iid_str = str(iid).strip()
+    if psf:
+        return PersonaRunSpec(psf, pvars, iid_str)
+    if not display:
+        return None
+    stem = display.split("__", 1)[0] if "__" in display else display
+    file = stem if stem.endswith(".json") else f"{stem}.json"
+    return PersonaRunSpec(file, pvars, iid_str)
+
+
 def _load_retry_failed(
     path: Optional[Path],
     output_dir: Path,
     fail_under: Optional[int],
-) -> List[Tuple[str, Optional[str]]]:
-    """Load batch summary and return list of (persona_name, run_label) for failed runs (error or score < fail_under)."""
+) -> List[Tuple[PersonaRunSpec, Optional[str]]]:
+    """Load batch summary and return (PersonaRunSpec, run_label) for failed runs (error or score < fail_under)."""
     if path is None or not path.is_file():
         # Find latest batch_summary_*.json in output_dir
         summaries = sorted(output_dir.glob("batch_summary_*.json"), key=lambda p: p.name, reverse=True)
@@ -1518,21 +1860,21 @@ def _load_retry_failed(
     except (json.JSONDecodeError, OSError):
         return []
     runs = data.get("runs") or []
-    out: List[Tuple[str, Optional[str]]] = []
+    out: List[Tuple[PersonaRunSpec, Optional[str]]] = []
     for r in runs:
         if r.get("error"):
-            persona = (r.get("persona") or "").strip()
-            if persona:
+            spec = _retry_row_to_spec(r)
+            if spec:
                 label = (r.get("run_label") or "").strip() or None
-                out.append((persona, label))
+                out.append((spec, label))
             continue
         if fail_under is not None:
             score = r.get("score")
             if score is None or int(score) < fail_under:
-                persona = (r.get("persona") or "").strip()
-                if persona:
+                spec = _retry_row_to_spec(r)
+                if spec:
                     label = (r.get("run_label") or "").strip() or None
-                    out.append((persona, label))
+                    out.append((spec, label))
     return out
 
 
@@ -1698,9 +2040,8 @@ def _compute_summary_by_tag(
         return {}
     by_tag: Dict[str, List[Dict[str, Any]]] = {}
     for item in summary:
-        pname = item.get("persona_name", "")
-        key = pname if pname.endswith(".json") else f"{pname}.json"
-        tags = tag_map.get(key) or tag_map.get(pname) or []
+        key = _summary_tag_lookup_filename(item)
+        tags = tag_map.get(key) or tag_map.get(Path(key).stem) or []
         for t in (tags if isinstance(tags, list) else []) or []:
             t = (t or "").strip()
             if t:
@@ -1744,6 +2085,12 @@ def _write_batch_summary(
             "result_path": item.get("result_path"),
             "criterion_scores": cs,
         }
+        if item.get("persona_source_file"):
+            row["persona_source_file"] = item["persona_source_file"]
+        if item.get("persona_variables") is not None:
+            row["persona_variables"] = item["persona_variables"]
+        if item.get("persona_instance_id") is not None:
+            row["persona_instance_id"] = item["persona_instance_id"]
         if item.get("persona_meta"):
             row["persona_meta"] = item["persona_meta"]
             row["severity"] = item["persona_meta"].get("severity")
@@ -1780,6 +2127,13 @@ def _write_batch_summary(
         lines.append("")
         for r in rows:
             lines.append(f"### {r['persona']}" + (f" ({r.get('run_label', '')})" if r.get("run_label") else ""))
+            if r.get("persona_source_file"):
+                lines.append(f"- **Source file:** {r['persona_source_file']}")
+            if r.get("persona_instance_id"):
+                lines.append(f"- **Instance id:** {r['persona_instance_id']}")
+            pv = r.get("persona_variables")
+            if isinstance(pv, dict) and pv:
+                lines.append(f"- **Variables:** `{json.dumps(pv, sort_keys=True)}`")
             lines.append(f"- **Score:** {r['score']}")
             if r.get("error"):
                 lines.append(f"- **Error:** {r['error']}")
@@ -1790,13 +2144,26 @@ def _write_batch_summary(
     if write_csv:
         import csv
         csv_path = output_dir / f"batch_summary_{timestamp}.csv"
-        headers = ["persona", "run_label", "score", "error", "result_path"] + criterion_columns
+        headers = [
+            "persona",
+            "persona_source_file",
+            "persona_instance_id",
+            "persona_variables_json",
+            "run_label",
+            "score",
+            "error",
+            "result_path",
+        ] + criterion_columns
         with csv_path.open("w", encoding="utf-8", newline="") as f:
             w = csv.DictWriter(f, fieldnames=headers, extrasaction="ignore")
             w.writeheader()
             for r in rows:
+                pv = r.get("persona_variables")
                 row = {
                     "persona": r["persona"],
+                    "persona_source_file": r.get("persona_source_file", "") or "",
+                    "persona_instance_id": r.get("persona_instance_id", "") or "",
+                    "persona_variables_json": json.dumps(pv, sort_keys=True) if isinstance(pv, dict) else "",
                     "run_label": r.get("run_label", ""),
                     "score": r.get("score", ""),
                     "error": r.get("error", "") or "",
@@ -1820,6 +2187,9 @@ def _write_batch_summary(
                     "error": r.get("error"),
                     "result_path": r.get("result_path"),
                     "criterion_scores": r.get("criterion_scores", {}),
+                    **({"persona_source_file": r["persona_source_file"]} if r.get("persona_source_file") else {}),
+                    **({"persona_variables": r["persona_variables"]} if r.get("persona_variables") is not None else {}),
+                    **({"persona_instance_id": r["persona_instance_id"]} if r.get("persona_instance_id") is not None else {}),
                     **({"persona_meta": r["persona_meta"]} if r.get("persona_meta") else {}),
                 }
                 for r in rows
@@ -1847,6 +2217,12 @@ def _write_batch_report_html(
     """Write batch_report_TIMESTAMP.html with a table and expandable rows (criterion_scores, severity)."""
     path = output_dir / f"batch_report_{timestamp}.html"
     severity_col = '<th>Severity</th>' if any(r.get("severity") for r in rows) else ''
+    show_param = any(
+        r.get("persona_source_file") or r.get("persona_variables") or r.get("persona_instance_id") for r in rows
+    )
+    src_col = '<th>Source file</th>' if show_param else ''
+    vars_col = '<th>Template vars</th>' if show_param else ''
+    inst_col = '<th>Instance id</th>' if show_param else ''
     trs = []
     for r in rows:
         persona = _escape_html(str(r.get("persona", "")))
@@ -1862,8 +2238,17 @@ def _write_batch_report_html(
         cs = r.get("criterion_scores") or {}
         details = "<br />".join(f"{k}: {v}" for k, v in sorted(cs.items()))
         severity_cell = f'<td>{sev}</td>' if severity_col else ''
+        pv = r.get("persona_variables")
+        vars_short = ""
+        if isinstance(pv, dict) and pv:
+            vars_short = _escape_html(json.dumps(pv, sort_keys=True)[:500])
+            if len(json.dumps(pv, sort_keys=True)) > 500:
+                vars_short += "…"
+        src_cell = f'<td>{_escape_html(str(r.get("persona_source_file") or ""))}</td>' if show_param else ''
+        vars_cell = f'<td><pre style="white-space:pre-wrap;max-width:28em;">{vars_short or "—"}</pre></td>' if show_param else ''
+        inst_cell = f'<td>{_escape_html(str(r.get("persona_instance_id") or "") or "—")}</td>' if show_param else ''
         trs.append(
-            f'<tr><td>{label}</td>{severity_cell}<td>{score_str}</td><td>{err}</td>'
+            f'<tr><td>{label}</td>{src_cell}{vars_cell}{inst_cell}{severity_cell}<td>{score_str}</td><td>{err}</td>'
             f'<td><a href="{href}">{_escape_html(result_basename)}</a></td>'
             f'<td><details><summary>Details</summary><pre>{_escape_html(details)}</pre></details></td></tr>'
         )
@@ -1873,7 +2258,7 @@ def _write_batch_report_html(
 <head><meta charset="utf-8"/><title>Batch report — {_escape_html(timestamp)}</title>
 <style>table {{ border-collapse: collapse; }} th, td {{ border: 1px solid #ccc; padding: 6px; }} pre {{ margin: 0; }}</style></head>
 <body><h1>Batch report — {timestamp}</h1>
-<table><thead><tr><th>Persona</th>{severity_col}<th>Score</th><th>Error</th><th>Result</th><th>Details</th></tr></thead>
+<table><thead><tr><th>Persona</th>{src_col}{vars_col}{inst_col}{severity_col}<th>Score</th><th>Error</th><th>Result</th><th>Details</th></tr></thead>
 <tbody>
 {table_rows}
 </tbody></table></body></html>"""
@@ -1914,10 +2299,23 @@ def _write_junit(
         if failed:
             failures += 1
         msg = err if err else (f"score {score} below {fail_under}" if failed and score is not None else "")
+        extra_lines = []
+        if item.get("persona_source_file"):
+            extra_lines.append(f"persona_source_file={item['persona_source_file']}")
+        if item.get("persona_instance_id"):
+            extra_lines.append(f"persona_instance_id={item['persona_instance_id']}")
+        pv = item.get("persona_variables")
+        if isinstance(pv, dict) and pv:
+            extra_lines.append("persona_variables=" + json.dumps(pv, sort_keys=True))
+        sys_out = ""
+        if extra_lines:
+            sys_out = f"<system-out>{esc(chr(10).join(extra_lines))}</system-out>"
         if failed:
-            cases.append(f'    <testcase name="{esc(name)}"><failure message="{esc(msg)}"/></testcase>')
+            cases.append(
+                f'    <testcase name="{esc(name)}">{sys_out}<failure message="{esc(msg)}"/></testcase>'
+            )
         else:
-            cases.append(f'    <testcase name="{esc(name)}"/>')
+            cases.append(f'    <testcase name="{esc(name)}">{sys_out}</testcase>')
     xml_content = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<testsuite name="mental-health-safety" tests="{len(summary)}" failures="{failures}">\n'
@@ -1986,6 +2384,8 @@ async def main_async(args: argparse.Namespace) -> int:
     personas_override = _parse_list_arg(getattr(args, "personas", None))
     project_root = Path(__file__).resolve().parent
     personas_dir: Optional[Path] = Path(args.personas_dir) if getattr(args, "personas_dir", None) else None
+    # Resolve bare filenames (e.g. foo.json) against --personas-dir when set, else bundled personas/.
+    persona_search_dir = personas_dir if personas_dir is not None else project_root / "personas"
     persona_tags_requested = _parse_list_arg(getattr(args, "persona_tags", None))
     parallel = max(1, int(getattr(args, "parallel", 1)))
     sut_backend = (getattr(args, "sut", None) or defaults.get("sut") or "anthropic").strip().lower()
@@ -2049,6 +2449,12 @@ async def main_async(args: argparse.Namespace) -> int:
     redact = getattr(args, "redact", False)
     criterion_weights = _parse_criterion_weights(getattr(args, "criterion_weights", None)) or defaults.get("criterion_weights")
     log_format = getattr(args, "log_format", "text") or "text"
+
+    try:
+        cli_persona_vars = _parse_persona_var_cli(args)
+    except ValueError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        return 1
 
     extra_criterion_specs: Optional[List[Dict[str, Any]]] = None
     if getattr(args, "criterion_file", None):
@@ -2160,10 +2566,13 @@ async def main_async(args: argparse.Namespace) -> int:
         run_id = _generate_run_id()
         sem = asyncio.Semaphore(parallel) if parallel > 1 else None
         tasks = []
-        for persona_name, run_label in retry_list:
+        merged_retry = [
+            (merge_cli_vars_into_specs([spec], cli_persona_vars)[0], label) for spec, label in retry_list
+        ]
+        for persona_spec, run_label in merged_retry:
             tasks.append(
                 _run_one(
-                    persona_name,
+                    persona_spec,
                     args,
                     sut_model,
                     judge_model,
@@ -2192,6 +2601,7 @@ async def main_async(args: argparse.Namespace) -> int:
                     log_format=log_format,
                     sut_timeout=sut_timeout,
                     judge_timeout=judge_timeout,
+                    persona_search_dir=persona_search_dir,
                 )
             )
         summary = await _gather_with_progress(tasks, quiet)
@@ -2266,42 +2676,42 @@ async def main_async(args: argparse.Namespace) -> int:
             return 1
 
         if personas_dir is not None:
-            personas = _discover_personas_from_dir(personas_dir)
-            if not personas:
+            raw_personas = _discover_personas_from_dir(personas_dir)
+            if not raw_personas:
                 console.print("[bold red]No persona JSON files found in --personas-dir.[/bold red]")
                 return 1
         else:
             profile_name = getattr(args, "config_profile", None)
             if profile_name and isinstance(config.get("profiles"), dict) and profile_name in config["profiles"]:
-                personas = list((config["profiles"][profile_name] or {}).get("personas") or [])
+                raw_personas = list((config["profiles"][profile_name] or {}).get("personas") or [])
             else:
-                personas = config.get("personas", [])
-            if not isinstance(personas, list) or not personas:
+                raw_personas = config.get("personas", [])
+            if not isinstance(raw_personas, list) or not raw_personas:
                 console.print("[bold red]Config must contain a non-empty 'personas' list (or profiles.NAME.personas).[/bold red]")
                 return 1
         if personas_override is not None:
-            # Filter to only requested personas (match by filename or stem, e.g. passive_ideation or passive_ideation.json)
-            allowed = {p.strip() for p in personas_override}
-            def _match(p: str) -> bool:
-                if p in allowed:
-                    return True
-                stem = Path(p).stem if "." in p else p
-                return stem in allowed or p.replace(".json", "") in allowed
-            personas = [p for p in personas if _match(p)]
-            if not personas:
+            allowed = {p.strip() for p in personas_override if p.strip()}
+            raw_personas = [p for p in raw_personas if _raw_persona_entry_matches_filter(p, allowed)]
+            if not raw_personas:
                 console.print("[bold red]No personas left after --personas filter.[/bold red]")
                 return 1
+        try:
+            persona_specs = [normalize_persona_config_entry(p) for p in raw_personas]
+        except ValueError as e:
+            console.print(f"[bold red]Persona config: {e}[/bold red]")
+            return 1
         tags_dir = personas_dir if personas_dir is not None else project_root / "personas"
-        personas = _filter_personas_by_tags(personas, persona_tags_requested or [], tags_dir)
-        personas = _filter_personas_by_difficulty(personas, getattr(args, "persona_difficulty", None), tags_dir)
-        if not personas:
+        persona_specs = _filter_specs_by_tags(persona_specs, persona_tags_requested or [], tags_dir)
+        persona_specs = _filter_specs_by_difficulty(persona_specs, getattr(args, "persona_difficulty", None), tags_dir)
+        if not persona_specs:
             console.print("[bold red]No personas match --persona-tags / --persona-difficulty.[/bold red]")
             return 1
-        personas = sorted(personas)
+        persona_specs = merge_cli_vars_into_specs(persona_specs, cli_persona_vars)
+        persona_specs = sorted(persona_specs, key=spec_sort_key)
         sample_n = getattr(args, "sample", None)
         if sample_n is not None and sample_n > 0:
-            n = min(sample_n, len(personas))
-            personas = random.sample(personas, n)
+            n = min(sample_n, len(persona_specs))
+            persona_specs = random.sample(persona_specs, n)
             if not quiet:
                 console.print(f"[dim]Sampled {n} persona(s) (--sample {sample_n}).[/dim]")
         shard_arg = getattr(args, "shard", None)
@@ -2310,18 +2720,18 @@ async def main_async(args: argparse.Namespace) -> int:
             console.print("[bold red]Invalid --shard; use N/M with 0 <= N < M (e.g. 0/4).[/bold red]")
             return 1
         if shard:
-            personas = _apply_shard(personas, shard)
+            persona_specs = _apply_shard(persona_specs, shard)
             if not quiet:
-                console.print(f"[dim]Shard {shard[0]}/{shard[1]}: running {len(personas)} persona(s).[/dim]")
+                console.print(f"[dim]Shard {shard[0]}/{shard[1]}: running {len(persona_specs)} persona(s).[/dim]")
         max_runs = getattr(args, "max_runs", None) or defaults.get("max_runs")
         if max_runs is not None and max_runs > 0:
-            personas = personas[:max_runs]
+            persona_specs = persona_specs[:max_runs]
             if not quiet:
-                console.print(f"[dim]Capped to --max-runs {max_runs}: running {len(personas)} persona(s).[/dim]")
+                console.print(f"[dim]Capped to --max-runs {max_runs}: running {len(persona_specs)} persona(s).[/dim]")
 
         if getattr(args, "dry_run", False):
             _print_dry_run(
-                personas,
+                persona_specs,
                 prompts_list,
                 criterion_ids,
                 len(extra_criterion_specs) if extra_criterion_specs else 0,
@@ -2334,20 +2744,19 @@ async def main_async(args: argparse.Namespace) -> int:
 
         run_id = _generate_run_id()
         repeat_cfg = max(1, min(getattr(args, "repeat", 1) or 1, 100))
-        total_config_runs = len(personas) * (len(prompts_list) if prompts_list else 1) * repeat_cfg
+        total_config_runs = len(persona_specs) * (len(prompts_list) if prompts_list else 1) * repeat_cfg
         progress_msg = (lambda p: f"  Completed: {p}") if (not quiet and total_config_runs > 1) else (lambda p: None)
         summary: List[Dict[str, Any]] = []
         sem = asyncio.Semaphore(parallel) if parallel > 1 else None
         tasks = []
-        for persona_name in personas:
-            if not isinstance(persona_name, str):
-                continue
+        for persona_spec in persona_specs:
+            label = display_name_for_spec(persona_spec)
             if prompts_list:
                 for pname, ptext in prompts_list:
                     for _ in range(repeat_cfg):
                         tasks.append(
                             _run_one(
-                            persona_name,
+                            persona_spec,
                             args,
                             sut_model,
                             judge_model,
@@ -2367,7 +2776,7 @@ async def main_async(args: argparse.Namespace) -> int:
                             history_path,
                             run_id=run_id,
                             run_timeout=run_timeout,
-                            on_complete_msg=progress_msg(persona_name),
+                            on_complete_msg=progress_msg(label),
                             judge_backend=judge_backend,
                             judge_temperature=judge_temperature,
                             cache_dir=cache_dir,
@@ -2377,13 +2786,14 @@ async def main_async(args: argparse.Namespace) -> int:
                             log_format=log_format,
                             sut_timeout=sut_timeout,
                             judge_timeout=judge_timeout,
+                            persona_search_dir=persona_search_dir,
                         )
                     )
             else:
                 for _ in range(repeat_cfg):
                     tasks.append(
                         _run_one(
-                            persona_name,
+                            persona_spec,
                             args,
                             sut_model,
                             judge_model,
@@ -2403,7 +2813,7 @@ async def main_async(args: argparse.Namespace) -> int:
                             history_path,
                             run_id=run_id,
                             run_timeout=run_timeout,
-                            on_complete_msg=progress_msg(persona_name),
+                            on_complete_msg=progress_msg(label),
                             judge_backend=judge_backend,
                             judge_temperature=judge_temperature,
                             cache_dir=cache_dir,
@@ -2413,6 +2823,7 @@ async def main_async(args: argparse.Namespace) -> int:
                             log_format=log_format,
                             sut_timeout=sut_timeout,
                             judge_timeout=judge_timeout,
+                            persona_search_dir=persona_search_dir,
                         )
                     )
         if tasks:
@@ -2528,16 +2939,23 @@ async def main_async(args: argparse.Namespace) -> int:
     else:
         persona_list = [args.persona]
     tags_dir = personas_dir if personas_dir is not None else project_root / "personas"
-    persona_list = _filter_personas_by_tags(persona_list, persona_tags_requested or [], tags_dir)
-    persona_list = _filter_personas_by_difficulty(persona_list, getattr(args, "persona_difficulty", None), tags_dir)
-    if not persona_list:
-        console.print("[bold red]No personas match --persona-tags / --persona-difficulty.[/bold red]")
+    try:
+        persona_specs = [normalize_persona_config_entry(p) for p in persona_list]
+    except ValueError as e:
+        console.print(f"[bold red]Persona config: {e}[/bold red]")
         return 1
-    persona_list = sorted(persona_list)
+    persona_specs = _filter_specs_by_personas_arg(persona_specs, personas_override)
+    persona_specs = _filter_specs_by_tags(persona_specs, persona_tags_requested or [], tags_dir)
+    persona_specs = _filter_specs_by_difficulty(persona_specs, getattr(args, "persona_difficulty", None), tags_dir)
+    if not persona_specs:
+        console.print("[bold red]No personas match filters (--personas / --persona-tags / --persona-difficulty).[/bold red]")
+        return 1
+    persona_specs = merge_cli_vars_into_specs(persona_specs, cli_persona_vars)
+    persona_specs = sorted(persona_specs, key=spec_sort_key)
     sample_n = getattr(args, "sample", None)
     if sample_n is not None and sample_n > 0:
-        n = min(sample_n, len(persona_list))
-        persona_list = random.sample(persona_list, n)
+        n = min(sample_n, len(persona_specs))
+        persona_specs = random.sample(persona_specs, n)
         if not quiet:
             console.print(f"[dim]Sampled {n} persona(s) (--sample {sample_n}).[/dim]")
     shard_arg = getattr(args, "shard", None)
@@ -2546,18 +2964,18 @@ async def main_async(args: argparse.Namespace) -> int:
         console.print("[bold red]Invalid --shard; use N/M with 0 <= N < M (e.g. 0/4).[/bold red]")
         return 1
     if shard:
-        persona_list = _apply_shard(persona_list, shard)
+        persona_specs = _apply_shard(persona_specs, shard)
         if not quiet:
-            console.print(f"[dim]Shard {shard[0]}/{shard[1]}: running {len(persona_list)} persona(s).[/dim]")
+            console.print(f"[dim]Shard {shard[0]}/{shard[1]}: running {len(persona_specs)} persona(s).[/dim]")
     max_runs = getattr(args, "max_runs", None) or defaults.get("max_runs")
     if max_runs is not None and max_runs > 0:
-        persona_list = persona_list[:max_runs]
+        persona_specs = persona_specs[:max_runs]
         if not quiet:
-            console.print(f"[dim]Capped to --max-runs {max_runs}: running {len(persona_list)} persona(s).[/dim]")
+            console.print(f"[dim]Capped to --max-runs {max_runs}: running {len(persona_specs)} persona(s).[/dim]")
 
     if getattr(args, "dry_run", False):
         _print_dry_run(
-            persona_list,
+            persona_specs,
             prompts_list,
             criterion_ids,
             len(extra_criterion_specs) if extra_criterion_specs else 0,
@@ -2570,17 +2988,18 @@ async def main_async(args: argparse.Namespace) -> int:
 
     run_id = _generate_run_id()
     repeat = max(1, min(getattr(args, "repeat", 1) or 1, 100))
-    total_runs = len(persona_list) * (len(prompts_list) if prompts_list else 1) * repeat
+    total_runs = len(persona_specs) * (len(prompts_list) if prompts_list else 1) * repeat
     progress_msg = (lambda p: f"  Completed: {p}") if (not quiet and total_runs > 1) else (lambda p: None)
     sem = asyncio.Semaphore(parallel) if parallel > 1 else None
     tasks = []
-    for persona_name in persona_list:
+    for persona_spec in persona_specs:
+        label = display_name_for_spec(persona_spec)
         if prompts_list:
             for pname, ptext in prompts_list:
                 for _ in range(repeat):
                     tasks.append(
                     _run_one(
-                        persona_name,
+                        persona_spec,
                         args,
                         sut_model,
                         judge_model,
@@ -2600,7 +3019,7 @@ async def main_async(args: argparse.Namespace) -> int:
                         history_path,
                         run_id=run_id,
                         run_timeout=run_timeout,
-                        on_complete_msg=progress_msg(persona_name),
+                        on_complete_msg=progress_msg(label),
                         judge_backend=judge_backend,
                         judge_temperature=judge_temperature,
                         cache_dir=cache_dir,
@@ -2610,13 +3029,14 @@ async def main_async(args: argparse.Namespace) -> int:
                         log_format=log_format,
                         sut_timeout=sut_timeout,
                         judge_timeout=judge_timeout,
+                        persona_search_dir=persona_search_dir,
                     )
                 )
         else:
             for _ in range(repeat):
                 tasks.append(
                     _run_one(
-                        persona_name,
+                        persona_spec,
                         args,
                         sut_model,
                         judge_model,
@@ -2636,7 +3056,7 @@ async def main_async(args: argparse.Namespace) -> int:
                         history_path,
                         run_id=run_id,
                         run_timeout=run_timeout,
-                        on_complete_msg=progress_msg(persona_name),
+                        on_complete_msg=progress_msg(label),
                         judge_backend=judge_backend,
                         judge_temperature=judge_temperature,
                         cache_dir=cache_dir,
@@ -2646,6 +3066,7 @@ async def main_async(args: argparse.Namespace) -> int:
                         log_format=log_format,
                         sut_timeout=sut_timeout,
                         judge_timeout=judge_timeout,
+                        persona_search_dir=persona_search_dir,
                     )
                 )
     summary = await _gather_with_progress(tasks, quiet) if tasks else []
@@ -2836,14 +3257,24 @@ def _run_preflight(
         persona_list = _discover_personas_from_dir(personas_dir)
     if not persona_list:
         persona_list = [getattr(args, "persona", "passive_ideation.json") or "passive_ideation.json"]
-    for pname in persona_list:
-        if not isinstance(pname, str):
-            continue
+    try:
+        cli_pv = _parse_persona_var_cli(args)
+    except ValueError as e:
+        errors.append(str(e))
+        cli_pv = {}
+    specs_pf: List[PersonaRunSpec] = []
+    for entry in persona_list:
         try:
-            path = resolve_persona_path(pname)
-            load_persona(path)
+            specs_pf.append(normalize_persona_config_entry(entry))
+        except ValueError as e:
+            errors.append(f"Persona entry: {e}")
+    specs_pf = merge_cli_vars_into_specs(specs_pf, cli_pv)
+    for spec in specs_pf:
+        try:
+            path = resolve_persona_path(spec.file)
+            load_persona(path, variables=spec.variables)
         except Exception as e:
-            errors.append(f"Persona {pname}: {e}")
+            errors.append(f"Persona {display_name_for_spec(spec)} ({spec.file}): {e}")
     try:
         get_criteria_specs(criterion_ids, extra_criterion_specs)
     except ValueError as e:
@@ -2865,15 +3296,26 @@ def _run_preflight(
     return 0
 
 
-def _list_personas() -> None:
-    """Print persona JSON files in personas/ (exclude batch_config, example_criterion, persona_tags)."""
+def _list_personas(args: argparse.Namespace) -> None:
+    """Print persona JSON files (exclude batch_config, example_criterion, persona_tags)."""
     project_root = Path(__file__).resolve().parent
-    personas_dir = project_root / "personas"
+    personas_dir = Path(args.personas_dir) if getattr(args, "personas_dir", None) else (project_root / "personas")
     if not personas_dir.is_dir():
         console.print("No personas/ directory found.")
         return
     exclude = _NON_PERSONA_JSON
+    if getattr(args, "templates", False):
+        # Allow listing example_parameterized_persona.json (template cookbook)
+        exclude = {"batch_config.json", "example_criterion.json", "persona_tags.json"}
     files = sorted(p for p in personas_dir.glob("*.json") if p.name not in exclude)
+    if getattr(args, "templates", False):
+        console.print("Personas with {{placeholder}} templates:")
+        shown = [p for p in files if _persona_file_has_template_placeholders(p)]
+        for p in shown:
+            console.print(f"  {p.name}")
+        if not shown:
+            console.print("  (none)")
+        return
     console.print("Available personas:")
     for p in files:
         console.print(f"  {p.name}")
@@ -2914,13 +3356,31 @@ def _run_validate_personas(args: argparse.Namespace) -> int:
     if not personas_dir.is_dir():
         console.print(f"[bold red]Not a directory: {personas_dir}[/bold red]")
         return 1
-    names = _discover_personas_from_dir(personas_dir)
+    names = list(_discover_personas_from_dir(personas_dir))
+    if getattr(args, "include_example_personas", False):
+        for fn in ("example_parameterized_persona.json",):
+            p = personas_dir / fn
+            if p.is_file() and fn not in names:
+                names.append(fn)
+    names = sorted(set(names))
     if not names:
         console.print("[yellow]No persona JSON files found.[/yellow]")
         return 0
     failed = 0
     for name in sorted(names):
         path = personas_dir / name if (personas_dir / name).is_file() else resolve_persona_path(name)
+        if getattr(args, "validate_schema", False):
+            try:
+                raw_data = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as e:
+                console.print(f"  [red]FAIL[/red] {name}: invalid JSON: {e}")
+                failed += 1
+                continue
+            schema_err = _validate_persona_json_schema_instance(raw_data)
+            if schema_err:
+                console.print(f"  [red]FAIL[/red] {name}: {schema_err}")
+                failed += 1
+                continue
         try:
             load_persona(path)
             console.print(f"  [green]OK[/green] {name}")
@@ -2945,9 +3405,8 @@ def _print_tag_summary(
         return
     by_tag: Dict[str, List[Dict[str, Any]]] = {}
     for item in summary:
-        pname = item.get("persona_name", "")
-        key = pname if pname.endswith(".json") else f"{pname}.json"
-        tags = tag_map.get(key) or tag_map.get(pname) or []
+        key = _summary_tag_lookup_filename(item)
+        tags = tag_map.get(key) or tag_map.get(Path(key).stem) or []
         for t in (tags if isinstance(tags, list) else []) or []:
             t = (t or "").strip()
             if t:
@@ -3142,7 +3601,7 @@ def _print_summary_by_criterion(
 
 
 def _print_dry_run(
-    persona_names: List[str],
+    persona_specs: List[PersonaRunSpec],
     prompts_list: Optional[List[Tuple[str, str]]],
     criterion_ids: Optional[List[str]],
     extra_criteria_count: int,
@@ -3163,9 +3622,30 @@ def _print_dry_run(
     console.print(f"  Criteria:    {criteria}")
     if prompts_list:
         console.print(f"  SUT prompts: {[p[0] for p in prompts_list]}")
-    n_runs = len(persona_names) * (len(prompts_list) if prompts_list else 1)
-    console.print(f"  Personas:   {persona_names}")
+    n_runs = len(persona_specs) * (len(prompts_list) if prompts_list else 1)
     console.print(f"  Total runs:  {n_runs}")
+    console.print(
+        "  [bold]Planned runs[/bold] (each bullet is one execution). "
+        "With --sut-prompts, run_label is the prompt file stem."
+    )
+    if prompts_list:
+        for pname, _ptext in prompts_list:
+            for s in persona_specs:
+                label = display_name_for_spec(s)
+                vars_json = json.dumps(s.variables, sort_keys=True) if s.variables else "{}"
+                iid = s.instance_id or "—"
+                console.print(
+                    f"    • [yellow]prompt[/yellow]={pname}  +  [cyan]{s.file}[/cyan]  id={iid}  vars={vars_json}  "
+                    f"→  [green]{label}[/green]"
+                )
+    else:
+        for s in persona_specs:
+            label = display_name_for_spec(s)
+            vars_json = json.dumps(s.variables, sort_keys=True) if s.variables else "{}"
+            iid = s.instance_id or "—"
+            console.print(
+                f"    • [cyan]{s.file}[/cyan]  id={iid}  vars={vars_json}  →  [green]{label}[/green]"
+            )
 
 
 def _list_criteria() -> None:
@@ -3208,8 +3688,11 @@ def main() -> None:
         args.personas = None
         exit_code = asyncio.run(main_async(args))
         raise SystemExit(exit_code)
+    if getattr(args, "templates", False) and not getattr(args, "list_personas", False):
+        console.print("[bold red]--templates requires --list-personas[/bold red]")
+        raise SystemExit(2)
     if getattr(args, "list_personas", False):
-        _list_personas()
+        _list_personas(args)
         raise SystemExit(0)
     if getattr(args, "list_tags", False):
         _list_tags(Path(__file__).resolve().parent / "personas")
