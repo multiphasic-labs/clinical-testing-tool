@@ -1,0 +1,22 @@
+{
+  "error_finding": {
+    "enabled": true,
+    "severity": "high",
+    "title": "Persona run error",
+    "description_prefix": ""
+  },
+  "score_threshold": {
+    "enabled": true,
+    "severity": "medium",
+    "title": "Score below threshold"
+  },
+  "critical_criteria": {
+    "enabled": true,
+    "match_mode": "contains",
+    "patterns": ["crisis"],
+    "trigger_score": 0,
+    "severity": "high",
+    "title_template": "Critical criterion failure: {criterion_id}",
+    "description": "Criterion scored 0."
+  }
+}

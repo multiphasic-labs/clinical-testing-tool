@@ -1,3 +1,20 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements.txt /app/requirements.txt
+RUN python -m pip install --no-cache-dir -r /app/requirements.txt
+
+COPY . /app
+
+EXPOSE 8080
+
+# Cloud Run sets $PORT. We default to 8080 for local docker run.
+CMD ["sh", "-c", "python -m uvicorn platform_api.app:app --host 0.0.0.0 --port ${PORT:-8080}"]
+
 # Mental Health Safety Tester — run personas against SUT and score with judge.
 # Build: docker build -t mental-health-tester .
 # Run:   docker run --env-file .env -v $(pwd)/results:/app/results mental-health-tester --persona passive_ideation.json --mock

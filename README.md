@@ -33,6 +33,7 @@ Persona JSON can use **`{{variable_name}}`** placeholders in user-facing fields.
 - **Example**: `personas/example_parameterized_persona.json` (excluded from default `--personas-dir` discovery).
 - **CI / hygiene**: `python scripts/lint_persona_templates.py` (optional `--strict`, `--include-examples`); `python main.py --validate-personas --validate-schema`.
 - **Discover templates**: `python main.py --list-personas --templates`.
+- **Platform API (v1 scaffold)**: `platform_api/` with run registry endpoints (`/runs`, `/runs/{id}`, `/items`, `/findings`).
 - **Changelog**: [CHANGELOG.md](CHANGELOG.md).
 
 ---

@@ -15,6 +15,7 @@ All notable changes to **Mental Health Safety Tester** are documented here.
 - **Literal braces**: in JSON strings, use `\\{{` and `\\}}` for literal `{{` / `}}` (see `docs/PERSONA_SCHEMA.md`).
 - **`scripts/lint_persona_templates.py`**: optional CI lint for `meta.variables` when placeholders exist (`--strict` for full key coverage).
 - **Saved result JSON** (`save_result_json`): includes `persona_source_file`, `persona_variables`, `persona_instance_id` when applicable.
+- **Platform API scaffold** (`platform_api/`): FastAPI app with initial run registry endpoints (`/health`, `/runs`, `/runs/{id}`, `/runs/{id}/items`, `/runs/{id}/findings`, `/runs/{id}/retry-failed`) backed by SQLAlchemy models.
 
 ### Fixed
 

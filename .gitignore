@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.*.local
+deploy/gcp/env.local
 
 # Python
 __pycache__/
@@ -14,6 +15,7 @@ venv/
 ENV/
 
 # Test / tooling
+.pytest_platform.sqlite3
 .pytest_cache/
 .coverage
 htmlcov/

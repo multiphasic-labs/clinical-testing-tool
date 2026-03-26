@@ -9,6 +9,14 @@ dependencies = [
   "anthropic",
   "python-dotenv",
   "rich",
+  "fastapi",
+  "uvicorn",
+  "sqlalchemy",
+  "pydantic",
+  "alembic",
+  "rq",
+  "redis",
+  "psycopg2-binary",
 ]
 
 [project.scripts]
