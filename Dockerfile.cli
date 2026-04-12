@@ -1,0 +1,20 @@
+# Optional: CLI-only image for local/containerized runs (not used by Cloud Run API deploy).
+# Build: docker build -f Dockerfile.cli -t mental-health-tester-cli .
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY main.py runner.py judge.py sut_backends.py ./
+COPY personas/ ./personas/
+COPY mental_health_tester/ ./mental_health_tester/ 2>/dev/null || true
+COPY pyproject.toml ./
+COPY scripts/ ./scripts/ 2>/dev/null || true
+
+ENV OUTPUT_DIR=/app/results
+RUN mkdir -p /app/results
+
+ENTRYPOINT ["python3", "main.py"]
+CMD ["--help"]
