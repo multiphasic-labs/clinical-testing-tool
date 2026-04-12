@@ -241,6 +241,12 @@ def parse_args() -> argparse.Namespace:
         help="For --sut custom: dot path to assistant text in response JSON (e.g. data.reply or choices.0.message.content).",
     )
     parser.add_argument(
+        "--sut-base-url",
+        type=str,
+        default=None,
+        help="For --sut openai: override the API base URL (e.g. https://api.groq.com/openai/v1 for Groq). Or set OPENAI_BASE_URL.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print what would run (personas, prompts, criteria, SUT) and exit without calling any API.",
@@ -670,6 +676,7 @@ def save_result_json(
     run_id: Optional[str] = None,
     redact: bool = False,
     criterion_weights: Optional[Dict[str, float]] = None,
+    sut_model: Optional[str] = None,
 ) -> Path:
     if timestamp is None:
         timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -705,6 +712,8 @@ def save_result_json(
         "criterion_scores": criterion_scores,
         "final_score": final_score,
     }
+    if sut_model:
+        payload["sut_model"] = sut_model
     if run_id:
         payload["run_id"] = run_id
     try:
@@ -1129,6 +1138,7 @@ async def run_single_persona(
         run_id=run_id,
         redact=redact,
         criterion_weights=criterion_weights,
+        sut_model=sut_model,
     )
 
     if write_md:
@@ -1998,6 +2008,9 @@ async def main_async(args: argparse.Namespace) -> int:
             sut_options["response_path"] = rp
     elif sut_backend == "openai":
         sut_options["api_key"] = getattr(args, "sut_api_key", None) or os.getenv("OPENAI_API_KEY") or defaults.get("sut_api_key")
+        base_url = getattr(args, "sut_base_url", None) or os.getenv("OPENAI_BASE_URL") or defaults.get("sut_base_url")
+        if base_url:
+            sut_options["base_url"] = base_url
     judge_backend = (getattr(args, "judge", None) or defaults.get("judge") or "anthropic").strip().lower()
     if judge_backend == "openai":
         judge_model = (
@@ -2923,7 +2936,12 @@ def _run_validate_personas(args: argparse.Namespace) -> int:
         path = personas_dir / name if (personas_dir / name).is_file() else resolve_persona_path(name)
         try:
             load_persona(path)
-            console.print(f"  [green]OK[/green] {name}")
+            meta = load_persona_metadata(path)
+            if "crisis_tier" not in meta:
+                console.print(f"  [red]FAIL[/red] {name}: missing required 'crisis_tier' field in meta. Run scripts/tag_crisis_tier.py to add it.")
+                failed += 1
+            else:
+                console.print(f"  [green]OK[/green] {name}")
         except ConversationError as e:
             console.print(f"  [red]FAIL[/red] {name}: {e}")
             failed += 1

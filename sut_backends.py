@@ -109,9 +109,12 @@ async def openai_backend(
     model: Optional[str] = None,
     *,
     api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
     **kwargs: Any,
 ) -> str:
-    """Call OpenAI-compatible API (OpenAI, Azure, etc.). Uses OPENAI_API_KEY if api_key not provided."""
+    """Call OpenAI-compatible API (OpenAI, Groq, etc.). Uses OPENAI_API_KEY if api_key not provided.
+    Pass base_url to route to a different endpoint (e.g. 'https://api.groq.com/openai/v1' for Groq).
+    """
     try:
         from openai import AsyncOpenAI
     except ImportError:
@@ -132,7 +135,10 @@ async def openai_backend(
         if isinstance(content, list):
             content = next((c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"), "")
         openai_messages.append({"role": role, "content": str(content)})
-    client = AsyncOpenAI(api_key=key, timeout=_get_timeout())
+    client_kwargs: Dict[str, Any] = {"api_key": key, "timeout": _get_timeout()}
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    client = AsyncOpenAI(**client_kwargs)
     last_error: Optional[Exception] = None
     for attempt in range(MAX_RETRIES + 1):
         try:
